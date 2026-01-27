@@ -53,6 +53,8 @@ ENV RAINYUN_PWD=""
 ENV TIMEOUT=15
 ENV MAX_DELAY=90
 ENV DEBUG=false
+# Chrome 低内存模式（适用于 1核1G 小鸡）
+ENV CHROME_LOW_MEMORY=false
 # 服务器管理功能（可选）
 ENV RAINYUN_API_KEY=""
 ENV AUTO_RENEW=true

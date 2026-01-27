@@ -12,6 +12,7 @@ services:
       - TIMEOUT=${TIMEOUT:-15}              # 连接超时等待(秒)
       - MAX_DELAY=${MAX_DELAY:-90}          # 最大随机等待延时(分钟)
       - DEBUG=${DEBUG:-false}               # 调试模式
+      - CHROME_LOW_MEMORY=${CHROME_LOW_MEMORY:-false}  # Chrome低内存模式(1核1G小鸡用)
       # 服务器管理功能 (可选)
       - RAINYUN_API_KEY=${RAINYUN_API_KEY:-}           # API密钥
       - AUTO_RENEW=${AUTO_RENEW:-true}                 # 自动续费开关

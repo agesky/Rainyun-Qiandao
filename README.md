@@ -32,6 +32,7 @@ docker-compose up --build
 | TIMEOUT | ❌ | 15 | 页面加载超时(秒) |
 | MAX_DELAY | ❌ | 90 | 随机延时上限(分钟) |
 | DEBUG | ❌ | false | 调试模式（跳过延时） |
+| CHROME_LOW_MEMORY | ❌ | false | Chrome 低内存模式（适用于低配置服务器） |
 
 ### 推送服务（可选）
 

@@ -27,6 +27,7 @@ from config import (
     APP_BASE_URL,
     APP_VERSION,
     CAPTCHA_RETRY_LIMIT,
+    CHROME_LOW_MEMORY,
     COOKIE_FILE,
     DOWNLOAD_MAX_RETRIES,
     DOWNLOAD_RETRY_DELAY,
@@ -206,6 +207,15 @@ def init_selenium(debug: bool, linux: bool) -> WebDriver:
         ops.add_argument("--headless")
         ops.add_argument("--disable-gpu")
         ops.add_argument("--disable-dev-shm-usage")
+        # 低配模式：适用于 1核1G 小鸡
+        if CHROME_LOW_MEMORY:
+            logger.info("启用 Chrome 低内存模式")
+            ops.add_argument("--single-process")
+            ops.add_argument("--disable-extensions")
+            ops.add_argument("--disable-background-networking")
+            ops.add_argument("--disable-sync")
+            ops.add_argument("--no-first-run")
+            ops.add_argument("--window-size=1920,1080")
         # 设置 Chromium 二进制路径（支持 ARM 和 AMD64）
         chrome_bin = os.environ.get("CHROME_BIN")
         if chrome_bin and os.path.exists(chrome_bin):

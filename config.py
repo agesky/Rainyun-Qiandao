@@ -26,6 +26,13 @@ def _read_float(name: str, default: float) -> float:
         return default
 
 
+def _read_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    return value.lower() in ("true", "1", "yes")
+
+
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://app.rainyun.com").rstrip("/")
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.v2.rainyun.com").rstrip("/")
 APP_VERSION = os.environ.get("APP_VERSION", "2.5")
@@ -41,5 +48,8 @@ RETRY_DELAY = _read_float("RETRY_DELAY", 2)
 DOWNLOAD_TIMEOUT = _read_int("DOWNLOAD_TIMEOUT", 10)
 DOWNLOAD_MAX_RETRIES = _read_int("DOWNLOAD_MAX_RETRIES", 3)
 DOWNLOAD_RETRY_DELAY = _read_float("DOWNLOAD_RETRY_DELAY", 2)
+
+# Chrome 低内存模式（适用于 1核1G 小鸡）
+CHROME_LOW_MEMORY = _read_bool("CHROME_LOW_MEMORY", False)
 
 DEFAULT_RENEW_COST_7_DAYS = _read_int("DEFAULT_RENEW_COST_7_DAYS", 2258)
