@@ -5,9 +5,12 @@ import random
 import re
 import shutil
 import time
+from dataclasses import dataclass
+from typing import Protocol, Sequence
 
 import cv2
 import ddddocr
+import numpy as np
 import requests
 from api_client import RainyunAPI
 from selenium.common.exceptions import TimeoutException
@@ -61,6 +64,98 @@ string_handler = logging.StreamHandler(log_capture_string)
 string_handler.setFormatter(formatter)
 logger.addHandler(string_handler)
 
+
+@dataclass(frozen=True)
+class MatchResult:
+    positions: list[tuple[int, int]]
+    similarities: list[float]
+    method: str
+
+
+class CaptchaMatcher(Protocol):
+    name: str
+
+    def match(
+        self,
+        background: np.ndarray,
+        sprites: list[np.ndarray],
+        bboxes: list[tuple[int, int, int, int]],
+    ) -> MatchResult | None:
+        ...
+
+
+class CaptchaSolver(Protocol):
+    def solve(
+        self,
+        background: np.ndarray,
+        sprites: list[np.ndarray],
+        bboxes: list[tuple[int, int, int, int]],
+    ) -> MatchResult | None:
+        ...
+
+
+class StrategyCaptchaSolver:
+    def __init__(self, matchers: Sequence[CaptchaMatcher]) -> None:
+        self.matchers = list(matchers)
+
+    def solve(
+        self,
+        background: np.ndarray,
+        sprites: list[np.ndarray],
+        bboxes: list[tuple[int, int, int, int]],
+    ) -> MatchResult | None:
+        for matcher in self.matchers:
+            result = matcher.match(background, sprites, bboxes)
+            if result:
+                logger.info(f"验证码匹配策略命中: {matcher.name}")
+                return result
+            logger.warning(f"验证码匹配策略失败: {matcher.name}")
+        return None
+
+
+class SiftMatcher:
+    name = "sift"
+
+    def __init__(self) -> None:
+        self._sift = cv2.SIFT_create() if hasattr(cv2, "SIFT_create") else None
+        if not self._sift:
+            logger.warning("SIFT 不可用，将跳过 SiftMatcher")
+
+    def match(
+        self,
+        background: np.ndarray,
+        sprites: list[np.ndarray],
+        bboxes: list[tuple[int, int, int, int]],
+    ) -> MatchResult | None:
+        if not self._sift:
+            return None
+        return build_match_result(
+            background,
+            sprites,
+            bboxes,
+            lambda sprite, spec: compute_sift_similarity(sprite, spec, self._sift),
+            self.name,
+        )
+
+
+class TemplateMatcher:
+    name = "template"
+
+    def match(
+        self,
+        background: np.ndarray,
+        sprites: list[np.ndarray],
+        bboxes: list[tuple[int, int, int, int]],
+    ) -> MatchResult | None:
+        return build_match_result(
+            background,
+            sprites,
+            bboxes,
+            compute_template_similarity,
+            self.name,
+        )
+
+
 def temp_path(ctx: RuntimeContext, filename: str) -> str:
     return os.path.join(ctx.temp_dir, filename)
 
@@ -95,6 +190,28 @@ def download_image(url: str, output_path: str, config: Config) -> bool:
             time.sleep(config.download_retry_delay)
     logger.error(f"下载图片失败，已重试 {config.download_max_retries} 次: {last_error}, URL: {url}")
     return False
+
+
+def download_image_bytes(url: str, config: Config, fallback_path: str | None = None) -> bytes:
+    last_error = None
+    for attempt in range(1, config.download_max_retries + 1):
+        try:
+            response = requests.get(url, timeout=config.download_timeout)
+            if response.status_code == 200 and response.content:
+                return response.content
+            last_error = f"status_code={response.status_code}"
+            logger.warning(f"内存下载图片失败 (第 {attempt} 次): {last_error}, URL: {url}")
+        except requests.RequestException as e:
+            last_error = str(e)
+            logger.warning(f"内存下载图片失败 (第 {attempt} 次): {e}, URL: {url}")
+        if attempt < config.download_max_retries:
+            time.sleep(config.download_retry_delay)
+    if fallback_path:
+        logger.warning("内存下载失败，尝试降级为文件下载")
+        if download_image(url, fallback_path, config):
+            with open(fallback_path, "rb") as f:
+                return f.read()
+    raise CaptchaRetryableError(f"验证码图片下载失败: {last_error}")
 
 
 def get_url_from_style(style):
@@ -137,6 +254,143 @@ def get_element_size(element) -> tuple[float, float]:
     return float(width), float(height)
 
 
+def decode_image_bytes(image_bytes: bytes, label: str) -> np.ndarray:
+    if not image_bytes:
+        raise CaptchaRetryableError(f"{label} 数据为空，无法解码")
+    buffer = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    if image is None:
+        raise CaptchaRetryableError(f"{label} 解码失败")
+    return image
+
+
+def encode_image_bytes(image: np.ndarray, label: str) -> bytes:
+    if image is None or image.size == 0:
+        raise CaptchaRetryableError(f"{label} 为空，无法编码")
+    success, encoded = cv2.imencode(".jpg", image)
+    if not success:
+        raise CaptchaRetryableError(f"{label} 编码失败")
+    return encoded.tobytes()
+
+
+def split_sprite_image(sprite: np.ndarray) -> list[np.ndarray]:
+    if sprite is None or sprite.size == 0:
+        raise CaptchaRetryableError("验证码小图为空，无法切分")
+    width = sprite.shape[1]
+    if width < 3:
+        raise CaptchaRetryableError("验证码小图宽度异常，无法切分")
+    step = width // 3
+    if step == 0:
+        raise CaptchaRetryableError("验证码小图切分宽度为 0")
+    return [
+        sprite[:, 0:step],
+        sprite[:, step:step * 2],
+        sprite[:, step * 2:width],
+    ]
+
+
+def detect_captcha_bboxes(
+    ctx: RuntimeContext,
+    captcha_bytes: bytes,
+    captcha_image: np.ndarray,
+) -> list[tuple[int, int, int, int]]:
+    payloads = [
+        ("raw", captcha_bytes),
+        ("reencode", encode_image_bytes(captcha_image, "验证码背景图")),
+    ]
+    for label, payload in payloads:
+        try:
+            bboxes = ctx.det.detection(payload)
+            if bboxes:
+                logger.info(f"验证码检测成功({label}): {len(bboxes)} 个候选框")
+                return bboxes
+            logger.warning(f"验证码检测结果为空({label})")
+        except Exception as e:
+            logger.warning(f"验证码检测失败({label}): {e}")
+    return []
+
+
+def normalize_gray(image: np.ndarray) -> np.ndarray:
+    if image is None:
+        return image
+    if len(image.shape) == 2:
+        return image
+    return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+
+def compute_sift_similarity(sprite: np.ndarray, spec: np.ndarray, sift) -> float:
+    sprite_gray = normalize_gray(sprite)
+    spec_gray = normalize_gray(spec)
+    kp1, des1 = sift.detectAndCompute(sprite_gray, None)
+    kp2, des2 = sift.detectAndCompute(spec_gray, None)
+    if des1 is None or des2 is None:
+        return 0.0
+    bf = cv2.BFMatcher()
+    matches = bf.knnMatch(des1, des2, k=2)
+    good = [m for m_n in matches if len(m_n) == 2 for m, n in [m_n] if m.distance < 0.8 * n.distance]
+    if not matches or len(good) == 0:
+        return 0.0
+    return len(good) / len(matches)
+
+
+def compute_template_similarity(sprite: np.ndarray, spec: np.ndarray) -> float:
+    sprite_gray = normalize_gray(sprite)
+    spec_gray = normalize_gray(spec)
+    if sprite_gray is None or spec_gray is None or sprite_gray.size == 0 or spec_gray.size == 0:
+        return 0.0
+    if sprite_gray.shape != spec_gray.shape:
+        sprite_gray = cv2.resize(sprite_gray, (spec_gray.shape[1], spec_gray.shape[0]))
+    result = cv2.matchTemplate(spec_gray, sprite_gray, cv2.TM_CCOEFF_NORMED)
+    return float(np.max(result))
+
+
+def build_match_result(
+    background: np.ndarray,
+    sprites: list[np.ndarray],
+    bboxes: list[tuple[int, int, int, int]],
+    similarity_fn,
+    method: str,
+) -> MatchResult | None:
+    if not bboxes:
+        logger.warning("验证码检测结果为空，无法匹配")
+        return None
+    if len(sprites) != 3:
+        logger.warning(f"验证码小图数量异常: {len(sprites)}")
+        return None
+    best_positions: list[tuple[int, int] | None] = [None, None, None]
+    best_scores: list[float | None] = [None, None, None]
+    for bbox in bboxes:
+        if len(bbox) != 4:
+            continue
+        x1, y1, x2, y2 = map(int, bbox)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        spec = background[y1:y2, x1:x2]
+        if spec.size == 0:
+            continue
+        center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
+        for index, sprite in enumerate(sprites):
+            if sprite is None or sprite.size == 0:
+                continue
+            similarity = similarity_fn(sprite, spec)
+            if best_scores[index] is None or similarity > best_scores[index]:
+                best_scores[index] = similarity
+                best_positions[index] = center
+    if any(pos is None for pos in best_positions):
+        return None
+    return MatchResult(
+        positions=[pos for pos in best_positions if pos is not None],
+        similarities=[float(score) if score is not None else 0.0 for score in best_scores],
+        method=method,
+    )
+
+
+def log_match_result(result: MatchResult) -> None:
+    for index, (position, similarity) in enumerate(zip(result.positions, result.similarities), start=1):
+        x, y = position
+        logger.info(f"图案 {index} 位于 ({x},{y})，匹配率：{similarity:.4f}，策略：{result.method}")
+
+
 def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
     """
     处理验证码逻辑（循环实现，避免递归栈溢出）
@@ -155,9 +409,9 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
             logger.error(f"无法刷新验证码，放弃重试: {refresh_error}")
             return False
 
+    solver = StrategyCaptchaSolver([SiftMatcher(), TemplateMatcher()])
     current_retry = retry_count
     while True:
-        # 检查重试次数上限
         if not ctx.config.captcha_retry_unlimited and current_retry >= ctx.config.captcha_retry_limit:
             logger.error("验证码重试次数过多，任务失败")
             return False
@@ -165,74 +419,48 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
             logger.info(f"无限重试模式，当前第 {current_retry + 1} 次尝试")
 
         try:
-            download_captcha_img(ctx)
-            if check_captcha(ctx):
+            captcha_bytes, captcha_image, sprites = download_captcha_assets(ctx)
+            if check_captcha(ctx, sprites):
                 logger.info(f"开始识别验证码 (第 {current_retry + 1} 次尝试)")
-                captcha = cv2.imread(temp_path(ctx, "captcha.jpg"))
-                # 修复：检查图片是否成功读取
-                if captcha is None:
-                    logger.error("验证码背景图读取失败，可能下载不完整")
-                    raise CaptchaRetryableError("验证码图片读取失败")
-                with open(temp_path(ctx, "captcha.jpg"), 'rb') as f:
-                    captcha_b = f.read()
-                bboxes = ctx.det.detection(captcha_b)
-                result = dict()
-                for i in range(len(bboxes)):
-                    x1, y1, x2, y2 = bboxes[i]
-                    spec = captcha[y1:y2, x1:x2]
-                    cv2.imwrite(temp_path(ctx, f"spec_{i + 1}.jpg"), spec)
-                    for j in range(3):
-                        similarity, matched = compute_similarity(
-                            temp_path(ctx, f"sprite_{j + 1}.jpg"),
-                            temp_path(ctx, f"spec_{i + 1}.jpg")
-                        )
-                        similarity_key = f"sprite_{j + 1}.similarity"
-                        position_key = f"sprite_{j + 1}.position"
-                        if similarity_key in result.keys():
-                            if float(result[similarity_key]) < similarity:
-                                result[similarity_key] = similarity
-                                result[position_key] = f"{int((x1 + x2) / 2)},{int((y1 + y2) / 2)}"
-                        else:
-                            result[similarity_key] = similarity
-                            result[position_key] = f"{int((x1 + x2) / 2)},{int((y1 + y2) / 2)}"
-                if check_answer(result):
-                    for i in range(3):
-                        similarity_key = f"sprite_{i + 1}.similarity"
-                        position_key = f"sprite_{i + 1}.position"
-                        positon = result[position_key]
-                        logger.info(f"图案 {i + 1} 位于 ({positon})，匹配率：{result[similarity_key]:.4f}")
-                        slide_bg = ctx.wait.until(EC.visibility_of_element_located(XPATH_CONFIG["CAPTCHA_BG"]))
-                        style = slide_bg.get_attribute("style")
-                        x, y = int(positon.split(",")[0]), int(positon.split(",")[1])
-                        width_raw, height_raw = captcha.shape[1], captcha.shape[0]
-                        try:
-                            width = get_width_from_style(style)
-                            height = get_height_from_style(style)
-                        except ValueError:
-                            width, height = get_element_size(slide_bg)
-                        x_offset, y_offset = float(-width / 2), float(-height / 2)
-                        final_x, final_y = int(x_offset + x / width_raw * width), int(y_offset + y / height_raw * height)
-                        ActionChains(ctx.driver).move_to_element_with_offset(slide_bg, final_x, final_y).click().perform()
-                    confirm = ctx.wait.until(
-                        EC.element_to_be_clickable(XPATH_CONFIG["CAPTCHA_SUBMIT"]))
-                    logger.info("提交验证码")
-                    confirm.click()
-                    time.sleep(5)
-                    result_el = ctx.wait.until(EC.visibility_of_element_located(XPATH_CONFIG["CAPTCHA_OP"]))
-                    if 'show-success' in result_el.get_attribute("class"):
-                        logger.info("验证码通过")
-                        return True
-                    else:
-                        logger.error("验证码未通过，正在重试")
+                bboxes = detect_captcha_bboxes(ctx, captcha_bytes, captcha_image)
+                if not bboxes:
+                    logger.error("验证码检测失败，正在重试")
                 else:
-                    # 输出匹配率信息，方便调试
-                    for i in range(3):
-                        similarity_key = f"sprite_{i + 1}.similarity"
-                        position_key = f"sprite_{i + 1}.position"
-                        sim = result.get(similarity_key, 0)
-                        pos = result.get(position_key, "N/A")
-                        logger.warning(f"图案 {i + 1}: 位置={pos}, 匹配率={sim:.4f}" if isinstance(sim, float) else f"图案 {i + 1}: 位置={pos}, 匹配率={sim}")
-                    logger.error("验证码识别失败，正在重试")
+                    result = solver.solve(captcha_image, sprites, bboxes)
+                    if result:
+                        log_match_result(result)
+                        if check_answer(result):
+                            for position in result.positions:
+                                slide_bg = ctx.wait.until(
+                                    EC.visibility_of_element_located(XPATH_CONFIG["CAPTCHA_BG"])
+                                )
+                                style = slide_bg.get_attribute("style")
+                                x, y = position
+                                width_raw, height_raw = captcha_image.shape[1], captcha_image.shape[0]
+                                try:
+                                    width = get_width_from_style(style)
+                                    height = get_height_from_style(style)
+                                except ValueError:
+                                    width, height = get_element_size(slide_bg)
+                                x_offset, y_offset = float(-width / 2), float(-height / 2)
+                                final_x = int(x_offset + x / width_raw * width)
+                                final_y = int(y_offset + y / height_raw * height)
+                                ActionChains(ctx.driver).move_to_element_with_offset(
+                                    slide_bg, final_x, final_y
+                                ).click().perform()
+                            confirm = ctx.wait.until(EC.element_to_be_clickable(XPATH_CONFIG["CAPTCHA_SUBMIT"]))
+                            logger.info("提交验证码")
+                            confirm.click()
+                            time.sleep(5)
+                            result_el = ctx.wait.until(EC.visibility_of_element_located(XPATH_CONFIG["CAPTCHA_OP"]))
+                            if 'show-success' in result_el.get_attribute("class"):
+                                logger.info("验证码通过")
+                                return True
+                            logger.error("验证码未通过，正在重试")
+                        else:
+                            logger.error("验证码识别结果无效，正在重试")
+                    else:
+                        logger.error("验证码匹配失败，正在重试")
             else:
                 logger.error("当前验证码识别率低，尝试刷新")
 
@@ -240,86 +468,53 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
                 return False
             current_retry += 1
         except (TimeoutException, ValueError, CaptchaRetryableError) as e:
-            # 修复：仅捕获预期异常（超时、解析失败、下载失败），其他程序错误直接抛出便于排查
             logger.error(f"验证码处理异常: {type(e).__name__} - {e}")
-            # 尝试刷新验证码重试
             if not refresh_captcha():
                 return False
             current_retry += 1
 
 
-def download_captcha_img(ctx: RuntimeContext):
+def download_captcha_assets(ctx: RuntimeContext) -> tuple[bytes, np.ndarray, list[np.ndarray]]:
     clear_temp_dir(ctx.temp_dir)
     slide_bg = ctx.wait.until(EC.visibility_of_element_located(XPATH_CONFIG["CAPTCHA_BG"]))
     img1_style = slide_bg.get_attribute("style")
     img1_url = get_url_from_style(img1_style)
     logger.info("开始下载验证码图片(1): " + img1_url)
-    # 修复：检查下载是否成功
-    if not download_image(img1_url, temp_path(ctx, "captcha.jpg"), ctx.config):
-        raise CaptchaRetryableError("验证码背景图下载失败")
+    captcha_bytes = download_image_bytes(img1_url, ctx.config, temp_path(ctx, "captcha.jpg"))
     sprite = ctx.wait.until(EC.visibility_of_element_located(XPATH_CONFIG["CAPTCHA_IMG_INSTRUCTION"]))
     img2_url = sprite.get_attribute("src")
     logger.info("开始下载验证码图片(2): " + img2_url)
-    # 修复：检查下载是否成功
-    if not download_image(img2_url, temp_path(ctx, "sprite.jpg"), ctx.config):
-        raise CaptchaRetryableError("验证码小图下载失败")
+    sprite_bytes = download_image_bytes(img2_url, ctx.config, temp_path(ctx, "sprite.jpg"))
+    captcha_image = decode_image_bytes(captcha_bytes, "验证码背景图")
+    sprite_image = decode_image_bytes(sprite_bytes, "验证码小图")
+    sprites = split_sprite_image(sprite_image)
+    return captcha_bytes, captcha_image, sprites
 
 
-def check_captcha(ctx: RuntimeContext) -> bool:
-    raw = cv2.imread(temp_path(ctx, "sprite.jpg"))
-    # 修复：检查图片是否成功读取
-    if raw is None:
-        logger.error("验证码小图读取失败，可能下载不完整")
+def check_captcha(ctx: RuntimeContext, sprites: list[np.ndarray]) -> bool:
+    if len(sprites) != 3:
+        logger.error(f"验证码小图数量异常，期望 3，实际 {len(sprites)}")
         return False
-    for i in range(3):
-        w = raw.shape[1]
-        temp = raw[:, w // 3 * i: w // 3 * (i + 1)]
-        cv2.imwrite(temp_path(ctx, f"sprite_{i + 1}.jpg"), temp)
-        with open(temp_path(ctx, f"sprite_{i + 1}.jpg"), mode="rb") as f:
-            temp_rb = f.read()
-        if ctx.ocr.classification(temp_rb) in ["0", "1"]:
+    for index, sprite in enumerate(sprites, start=1):
+        sprite_bytes = encode_image_bytes(sprite, f"验证码小图{index}")
+        if ctx.ocr.classification(sprite_bytes) in ["0", "1"]:
+            logger.warning(f"验证码小图 {index} 识别为低置信度标记，跳过本次识别")
             return False
     return True
 
 
 # 检查是否存在重复坐标,快速判断识别错误
-def check_answer(d: dict) -> bool:
-    # 修复：空字典或不完整结果直接返回 False
-    # 需要 3 个 sprite 的 similarity + position = 6 个键
-    if not d or len(d) < 6:
-        logger.warning(f"验证码识别结果不完整，当前仅有 {len(d) if d else 0} 个键，预期至少 6 个")
+def check_answer(result: MatchResult) -> bool:
+    if not result.positions or len(result.positions) < 3:
+        logger.warning(f"验证码识别坐标不足，当前仅有 {len(result.positions) if result.positions else 0} 个")
         return False
-    positions = [value for key, value in d.items() if key.endswith(".position")]
-    if len(positions) < 3:
-        logger.warning("验证码识别坐标不足，无法校验")
+    if len(result.similarities) < 3:
+        logger.warning(f"验证码匹配率不足，当前仅有 {len(result.similarities)} 个")
         return False
-    if len(positions) != len(set(positions)):
-        logger.warning(f"验证码识别坐标重复: {positions}")
+    if len(result.positions) != len(set(result.positions)):
+        logger.warning(f"验证码识别坐标重复: {result.positions}")
         return False
     return True
-
-
-def compute_similarity(img1_path, img2_path):
-    img1 = cv2.imread(img1_path, cv2.IMREAD_GRAYSCALE)
-    img2 = cv2.imread(img2_path, cv2.IMREAD_GRAYSCALE)
-
-    sift = cv2.SIFT_create()
-    kp1, des1 = sift.detectAndCompute(img1, None)
-    kp2, des2 = sift.detectAndCompute(img2, None)
-
-    if des1 is None or des2 is None:
-        return 0.0, 0
-
-    bf = cv2.BFMatcher()
-    matches = bf.knnMatch(des1, des2, k=2)
-
-    good = [m for m_n in matches if len(m_n) == 2 for m, n in [m_n] if m.distance < 0.8 * n.distance]
-
-    if len(good) == 0:
-        return 0.0, 0
-
-    similarity = len(good) / len(matches)
-    return similarity, len(good)
 
 
 def run():
