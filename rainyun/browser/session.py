@@ -12,7 +12,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.support.wait import WebDriverWait
 
-from api_client import RainyunAPI
+from rainyun.api.client import RainyunAPI
 from rainyun.config import Config
 
 logger = logging.getLogger(__name__)

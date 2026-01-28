@@ -12,7 +12,7 @@ import cv2
 import ddddocr
 import numpy as np
 import requests
-from api_client import RainyunAPI
+from .api.client import RainyunAPI
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
@@ -45,7 +45,7 @@ except Exception as e:
 ServerManager = None
 _server_manager_error = None
 try:
-    from server_manager import ServerManager
+    from .server.manager import ServerManager
 
     print("✅ 服务器管理模块加载成功")
 except Exception as e:

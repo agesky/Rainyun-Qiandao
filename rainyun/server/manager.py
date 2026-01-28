@@ -1,0 +1,270 @@
+"""
+服务器管理模块
+负责服务器到期检查、自动续费等业务逻辑
+"""
+import logging
+from datetime import datetime
+from typing import Optional
+
+from rainyun.api.client import RainyunAPI, RainyunAPIError
+from rainyun.config import Config, get_default_config
+
+logger = logging.getLogger(__name__)
+
+
+class ServerInfo:
+    """服务器信息"""
+
+    def __init__(self, server_id: int, name: str, expired_at: int, renew_price: int):
+        self.id = server_id
+        self.name = name
+        self.expired_at = expired_at  # Unix 时间戳
+        self.renew_price = renew_price  # 续费 7 天所需积分
+
+    @property
+    def expired_datetime(self) -> datetime:
+        """到期时间（datetime 对象）"""
+        return datetime.fromtimestamp(self.expired_at)
+
+    @property
+    def days_remaining(self) -> int:
+        """剩余天数"""
+        delta = self.expired_datetime - datetime.now()
+        return max(0, delta.days)
+
+    @property
+    def expired_str(self) -> str:
+        """到期时间格式化字符串"""
+        return self.expired_datetime.strftime("%Y-%m-%d %H:%M:%S")
+
+
+class ServerManager:
+    """服务器管理器"""
+
+    def __init__(self, api_key: str, config: Optional[Config] = None):
+        """
+        初始化服务器管理器
+
+        Args:
+            api_key: 雨云 API 密钥
+        """
+        self.config = config or get_default_config()
+        self.api = RainyunAPI(api_key, config=self.config)
+        self.auto_renew = self.config.auto_renew
+        self.renew_threshold = self.config.renew_threshold_days
+        self.renew_product_ids = self.config.renew_product_ids
+        self._whitelist_parse_error = self.config.renew_product_ids_parse_error
+        if not self._whitelist_parse_error:
+            if self.renew_product_ids:
+                logger.info(f"白名单模式：只续费产品 {self.renew_product_ids}")
+            else:
+                logger.info("白名单为空，将续费所有服务器")
+
+    def get_all_servers(self) -> list:
+        """
+        获取所有服务器信息
+
+        Returns:
+            ServerInfo 对象列表
+        """
+        servers = []
+        try:
+            server_ids = self.api.get_server_ids()
+            logger.info(f"找到 {len(server_ids)} 台服务器")
+
+            for sid in server_ids:
+                try:
+                    detail = self.api.get_server_detail(sid)
+                    # API 返回格式：{"Data": {"ExpDate": 1770306863, ...}, "RenewPointPrice": {"7": 2258, "31": 10000}}
+                    server_data = detail.get("Data", {})
+                    expired_at = server_data.get("ExpDate", 0)
+                    # 修复：ExpDate 缺失或无效时跳过该服务器，避免误续费
+                    if not expired_at or expired_at <= 0:
+                        logger.warning(f"服务器 {sid} 的 ExpDate 无效 ({expired_at})，跳过")
+                        continue
+                    # 服务器名：尝试从 EggType 获取，否则用默认名
+                    # 注意：EggType 可能为 null，需要安全处理
+                    egg_type = server_data.get("EggType") or {}
+                    egg_info = egg_type.get("egg") or {}
+                    server_name = egg_info.get("title", f"游戏云-{sid}")
+                    # 获取续费价格（动态获取，兜底使用默认值）
+                    # 注意：API 返回的 key 可能是整数 7 或字符串 "7"，value 也可能是字符串
+                    renew_price_map = detail.get("RenewPointPrice") or {}
+                    raw_price = renew_price_map.get(7) or renew_price_map.get("7")
+                    try:
+                        renew_price = (
+                            int(raw_price)
+                            if raw_price is not None
+                            else self.config.default_renew_cost_7_days
+                        )
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            f"服务器 {sid} 的续费价格无效 ({raw_price})，使用默认值 {self.config.default_renew_cost_7_days}"
+                        )
+                        renew_price = self.config.default_renew_cost_7_days
+                    server = ServerInfo(
+                        server_id=sid,
+                        name=server_name,
+                        expired_at=expired_at,
+                        renew_price=renew_price,
+                    )
+                    servers.append(server)
+                    logger.info(
+                        f"  - {server.name} (ID:{sid}): 到期 {server.expired_str}, 剩余 {server.days_remaining} 天, 续费 {renew_price} 积分/7天"
+                    )
+                except RainyunAPIError as e:
+                    logger.error(f"获取服务器 {sid} 详情失败: {e}")
+
+        except RainyunAPIError as e:
+            logger.error(f"获取服务器列表失败: {e}")
+
+        return servers
+
+    def _build_points_warning(self, servers: list[ServerInfo], points: int) -> dict | None:
+        if self._whitelist_parse_error:
+            return None
+        whitelist_servers = self._get_whitelist_servers(servers)
+        if not whitelist_servers:
+            return None
+        total_renew_cost = sum(s.renew_price for s in whitelist_servers)
+        if points >= total_renew_cost:
+            return None
+        shortage = total_renew_cost - points
+        days_needed = (shortage // 500) + (1 if shortage % 500 else 0)
+        logger.warning(f"⚠️ 积分预警！当前 {points}，续费所需 {total_renew_cost}，缺口 {shortage}")
+        return {
+            "current": points,
+            "needed": total_renew_cost,
+            "shortage": shortage,
+            "servers_count": len(whitelist_servers),
+            "days_to_recover": days_needed,
+        }
+
+    def _get_whitelist_servers(self, servers: list[ServerInfo]) -> list[ServerInfo]:
+        if self.renew_product_ids:
+            return [s for s in servers if s.id in self.renew_product_ids]
+        return servers
+
+    def _attempt_auto_renew(self, server: ServerInfo, result: dict, status: dict) -> str | None:
+        if self._whitelist_parse_error:
+            return f"{server.name} 即将到期，但白名单配置错误，自动续费已禁用"
+        if self.renew_product_ids and server.id not in self.renew_product_ids:
+            logger.info(f"  ↳ 跳过：不在白名单中 (ID: {server.id})")
+            return f"{server.name} 即将到期，但不在续费白名单中"
+        if not self.auto_renew:
+            return f"{server.name} 即将到期，但自动续费已关闭"
+
+        if result["points"] >= server.renew_price:
+            try:
+                self.api.renew_server(server.id, days=7)
+                logger.info(f"✅ {server.name} 续费成功！消耗 {server.renew_price} 积分")
+                result["points"] -= server.renew_price
+                status["renewed"] = True
+                result["renewed"].append(server.name)
+                return None
+            except RainyunAPIError as e:
+                logger.error(f"❌ {server.name} 续费失败: {e}")
+                return f"{server.name} 续费失败: {e}"
+        warning = f"积分不足！{server.name} 需要 {server.renew_price}，当前 {result['points']}"
+        logger.warning(warning)
+        return warning
+
+    def check_and_renew(self) -> dict:
+        """
+        检查所有服务器到期时间，必要时自动续费
+
+        Returns:
+            结果摘要字典：
+            {
+                "points": 当前积分,
+                "servers": [服务器状态列表],
+                "renewed": [续费成功的服务器],
+                "warnings": [警告信息],
+                "points_warning": 积分预警信息（如果有）
+            }
+        """
+        result = {
+            "points": 0,
+            "servers": [],
+            "renewed": [],
+            "warnings": [],
+            "points_warning": None,
+        }
+
+        try:
+            result["points"] = self.api.get_user_points()
+            logger.info(f"当前积分: {result['points']}")
+
+            servers = self.get_all_servers()
+            result["points_warning"] = self._build_points_warning(servers, result["points"])
+
+            for server in servers:
+                server_status = {
+                    "id": server.id,
+                    "name": server.name,
+                    "expired": server.expired_str,
+                    "days_remaining": server.days_remaining,
+                    "renew_price": server.renew_price,
+                    "renewed": False,
+                }
+
+                if server.days_remaining <= self.renew_threshold:
+                    logger.warning(f"⚠️ {server.name} 即将到期！剩余 {server.days_remaining} 天")
+                    warning = self._attempt_auto_renew(server, result, server_status)
+                    if warning:
+                        result["warnings"].append(warning)
+
+                result["servers"].append(server_status)
+
+        except RainyunAPIError as e:
+            logger.error(f"服务器检查失败: {e}")
+            result["warnings"].append(f"API 调用失败: {e}")
+
+        return result
+
+    def generate_report(self, result: dict) -> str:
+        """
+        生成服务器状态报告（用于通知推送）
+
+        Args:
+            result: check_and_renew 返回的结果字典
+
+        Returns:
+            格式化的报告字符串
+        """
+        lines = [
+            "━━━━━━ 服务器状态 ━━━━━━",
+            f"💰 当前积分: {result['points']}",
+        ]
+
+        # 积分预警（放在最前面，醒目提示）
+        if result.get("points_warning"):
+            pw = result["points_warning"]
+            lines.append("")
+            lines.append("🚨 积分预警 🚨")
+            lines.append(f"   续费 {pw['servers_count']} 台服务器需要: {pw['needed']} 积分")
+            lines.append(f"   当前积分: {pw['current']}")
+            lines.append(f"   缺口: {pw['shortage']} 积分")
+            lines.append(f"   建议: 连续签到 {pw['days_to_recover']} 天可补足")
+
+        if result["servers"]:
+            lines.append("")
+            for server in result["servers"]:
+                status = "✅ 已续费" if server["renewed"] else ""
+                days_emoji = "🔴" if server["days_remaining"] <= 3 else "🟡" if server["days_remaining"] <= 7 else "🟢"
+                lines.append(f"🖥️ {server['name']} (续费: {server['renew_price']}积分/7天)")
+                lines.append(f"   {days_emoji} 剩余 {server['days_remaining']} 天 ({server['expired']}) {status}")
+        else:
+            lines.append("📭 无服务器")
+
+        if result["renewed"]:
+            lines.append("")
+            lines.append(f"🎉 本次续费: {', '.join(result['renewed'])}")
+
+        if result["warnings"]:
+            lines.append("")
+            lines.append("⚠️ 警告:")
+            for warning in result["warnings"]:
+                lines.append(f"   - {warning}")
+
+        return "\n".join(lines)
