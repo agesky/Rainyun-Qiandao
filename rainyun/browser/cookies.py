@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 
 from selenium.webdriver.chrome.webdriver import WebDriver
 
@@ -40,6 +41,21 @@ def load_cookies(driver: WebDriver, config: Config) -> bool:
                 logger.warning(f"添加 cookie 失败: {e}")
         logger.info("Cookies 已加载")
         return True
+    except json.JSONDecodeError as e:
+        backup_path = f"{config.cookie_file}.bad-{time.strftime('%Y%m%d-%H%M%S')}"
+        try:
+            os.replace(config.cookie_file, backup_path)
+            logger.warning(f"Cookies 文件损坏，已备份到 {backup_path}")
+        except OSError as rename_error:
+            logger.warning(f"备份 cookies 文件失败: {rename_error}")
+        try:
+            with open(config.cookie_file, "w") as f:
+                json.dump([], f)
+            logger.info("Cookies 文件已清空")
+        except OSError as write_error:
+            logger.warning(f"清空 cookies 文件失败: {write_error}")
+        logger.error(f"加载 cookies 失败: {e}")
+        return False
     except Exception as e:
         logger.error(f"加载 cookies 失败: {e}")
         return False
