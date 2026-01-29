@@ -21,6 +21,11 @@ cp .env.example .env
 docker-compose up --build
 ```
 
+## 入口与结构
+
+- 统一入口为 `python -m rainyun`（Docker/本地一致）。  
+- 核心代码位于 `rainyun/` 包内，根目录旧入口与兼容 shim 已移除。
+
 ## 环境变量
 
 ### 基础配置（必填）
@@ -65,7 +70,7 @@ docker-compose up --build
 
 | 变量名 | 必填 | 默认值 | 说明 |
 |--------|------|--------|------|
-| APP_VERSION | ❌ | 2.6 | 日志显示的版本号 |
+| APP_VERSION | ❌ | 2.7 | 日志显示的版本号 |
 | APP_BASE_URL | ❌ | https://app.rainyun.com | 雨云站点地址 |
 | API_BASE_URL | ❌ | https://api.v2.rainyun.com | API 基础地址 |
 | COOKIE_FILE | ❌ | cookies.json | 登录 Cookie 存储文件 |
@@ -139,6 +144,12 @@ docker compose -f docker-compose.yml -f docker-compose.cron.yml up -d --build
 crontab -l | grep -v "rainyun" | crontab -
 # 或手动编辑: crontab -e，找到并删除 rainyun 相关行
 ```
+
+如果你之前通过 `python rainyun.py` 启动或脚本中仍导入旧模块，请更新为：
+
+- 启动入口：`python -m rainyun`
+- 导入路径：`rainyun.api.client` / `rainyun.server.manager` / `rainyun.notify` / `rainyun.config`
+- 如有自定义 docker-compose volume，请移除 `./rainyun.py:/app/rainyun.py`
 
 > ⚠️ 新版本新增了 `entrypoint.sh` 和 `docker-compose.cron.yml` 文件，升级后需要重新构建镜像。
 

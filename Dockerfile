@@ -47,12 +47,7 @@ RUN pip install --upgrade pip setuptools wheel && \
 
 # 复制应用代码
 COPY rainyun/ ./rainyun/
-COPY rainyun.py .
-COPY config.py .
-COPY notify.py .
 COPY stealth.min.js .
-COPY api_client.py .
-COPY server_manager.py .
 COPY entrypoint.sh .
 # 转换 Windows 换行符为 Unix 格式，并设置执行权限
 RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh

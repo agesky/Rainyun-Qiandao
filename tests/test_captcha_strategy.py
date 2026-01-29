@@ -1,8 +1,18 @@
 import unittest
 
-import numpy as np
+try:
+    import cv2  # noqa: F401
+    import numpy as np
+except ModuleNotFoundError:
+    cv2 = None
+    np = None
 
-from rainyun.main import StrategyCaptchaSolver, TemplateMatcher, split_sprite_image
+if np is not None and cv2 is not None:
+    from rainyun.main import StrategyCaptchaSolver, TemplateMatcher, split_sprite_image
+else:
+    StrategyCaptchaSolver = None
+    TemplateMatcher = None
+    split_sprite_image = None
 
 
 class DummyMatcher:
@@ -13,6 +23,7 @@ class DummyMatcher:
 
 
 class CaptchaStrategyTests(unittest.TestCase):
+    @unittest.skipIf(np is None or cv2 is None, "numpy/cv2 not installed")
     def test_template_matcher_positions(self):
         background = np.zeros((60, 60, 3), dtype=np.uint8)
 
@@ -39,6 +50,7 @@ class CaptchaStrategyTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.positions, [(10, 10), (25, 35), (45, 15)])
 
+    @unittest.skipIf(np is None or cv2 is None, "numpy/cv2 not installed")
     def test_solver_fallbacks_to_template(self):
         background = np.zeros((20, 20, 3), dtype=np.uint8)
         sprite = np.zeros((5, 5, 3), dtype=np.uint8)
@@ -52,6 +64,7 @@ class CaptchaStrategyTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.method, "template")
 
+    @unittest.skipIf(np is None or cv2 is None, "numpy/cv2 not installed")
     def test_split_sprite_image(self):
         sprite = np.zeros((5, 10, 3), dtype=np.uint8)
         parts = split_sprite_image(sprite)
