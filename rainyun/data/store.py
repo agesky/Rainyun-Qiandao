@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -16,6 +17,8 @@ class DataStore:
     """JSON 数据文件的读写入口。"""
 
     def __init__(self, path: str | Path = DEFAULT_DATA_PATH) -> None:
+        if path == DEFAULT_DATA_PATH:
+            path = os.environ.get("DATA_PATH", DEFAULT_DATA_PATH)
         self.path = Path(path)
         self.data: ConfigData | None = None
 

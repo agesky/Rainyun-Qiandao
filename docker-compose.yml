@@ -24,9 +24,17 @@ services:
       # 定时模式 (可选，默认关闭)
       - CRON_MODE=${CRON_MODE:-false}                    # 定时模式开关
       - "CRON_SCHEDULE=${CRON_SCHEDULE:-0 8 * * *}"       # 执行计划(cron表达式)
+      # Web 面板
+      - WEB_ENABLED=${WEB_ENABLED:-true}
+      - WEB_HOST=${WEB_HOST:-0.0.0.0}
+      - WEB_PORT=${WEB_PORT:-8000}
+      - DATA_PATH=${DATA_PATH:-data/config.json}
+    ports:
+      - "${WEB_PORT:-8000}:8000"
     volumes:
       - ./temp:/app/temp                    # 临时文件目录
       - ./cookies.json:/app/cookies.json    # 持久化 cookies
+      - ./data:/app/data                    # 持久化数据
       - ./rainyun:/app/rainyun
     shm_size: '2gb'                         # Chrome 需要足够的共享内存
     restart: "no"

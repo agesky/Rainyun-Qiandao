@@ -9,6 +9,22 @@ DEFAULT_SCHEDULE="0 8 * * *"
 # 合法的 @ 表达式白名单（supercronic 支持的）
 VALID_AT_EXPRESSIONS="@yearly @annually @monthly @weekly @daily @hourly"
 
+WEB_ENABLED="${WEB_ENABLED:-true}"
+WEB_HOST="${WEB_HOST:-0.0.0.0}"
+WEB_PORT="${WEB_PORT:-8000}"
+
+start_web() {
+    if [ "$WEB_ENABLED" = "true" ]; then
+        echo "=== Web 面板启动 ==="
+        echo "地址: http://${WEB_HOST}:${WEB_PORT}"
+        uvicorn rainyun.web.app:app --host "$WEB_HOST" --port "$WEB_PORT" &
+    else
+        echo "=== Web 面板已关闭 ==="
+    fi
+}
+
+start_web
+
 if [ "$CRON_MODE" = "true" ]; then
     echo "=== 定时模式启用 ==="
 

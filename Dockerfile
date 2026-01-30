@@ -73,6 +73,13 @@ ENV CRON_SCHEDULE="0 8 * * *"
 # Chromium 路径（Debian 系统）
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+# Web 面板配置
+ENV WEB_ENABLED=true
+ENV WEB_HOST=0.0.0.0
+ENV WEB_PORT=8000
+ENV DATA_PATH=data/config.json
+
+EXPOSE 8000
 
 # 启动脚本（支持单次运行和定时模式）
 CMD ["/app/entrypoint.sh"]
