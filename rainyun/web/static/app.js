@@ -78,6 +78,32 @@ function showToast(message, type = "success") {
   setTimeout(() => toast.classList.add("hidden"), 2800);
 }
 
+function setCellLines(cell, lines, muted = false) {
+  if (!cell) return;
+  cell.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "cell-lines";
+  lines.forEach((text) => {
+    const line = document.createElement("span");
+    line.textContent = text;
+    if (muted) {
+      line.classList.add("cell-muted");
+    }
+    wrap.appendChild(line);
+  });
+  cell.appendChild(wrap);
+}
+
+function formatServerLine(server) {
+  const name = server.name || `服务器${server.id || ""}`.trim();
+  const days =
+    typeof server.days_remaining === "number"
+      ? `${server.days_remaining} 天`
+      : "未知";
+  const expired = server.expired || "未知";
+  return `${name} (${server.id}) ${days} (${expired})`;
+}
+
 function readNumberValue(input, fallback) {
   const raw = input.value.trim();
   if (!raw) {
@@ -338,6 +364,7 @@ async function handleLogin() {
 async function loadAccounts() {
   const accounts = await apiFetch("/api/accounts");
   accountsBody.innerHTML = "";
+  const rowMap = new Map();
   accounts.forEach((account) => {
     const row = document.createElement("tr");
     const canRenew = !!account.api_key;
@@ -346,6 +373,9 @@ async function loadAccounts() {
       <td>${account.enabled ? "是" : "否"}</td>
       <td>${account.last_status || "-"}</td>
       <td>${account.last_checkin || "-"}</td>
+      <td data-field="points">-</td>
+      <td data-field="whitelist">-</td>
+      <td data-field="expiry">-</td>
       <td>
         <button class="ghost-btn" data-action="checkin" data-id="${account.id}">签到</button>
         <button class="ghost-btn" data-action="renew" data-id="${account.id}" ${canRenew ? "" : "disabled"}>续费</button>
@@ -354,7 +384,62 @@ async function loadAccounts() {
       </td>
     `;
     accountsBody.appendChild(row);
+    rowMap.set(account.id, row);
   });
+  await Promise.all(
+    accounts.map(async (account) => {
+      const row = rowMap.get(account.id);
+      if (!row) return;
+      const pointsCell = row.querySelector("[data-field='points']");
+      const whitelistCell = row.querySelector("[data-field='whitelist']");
+      const expiryCell = row.querySelector("[data-field='expiry']");
+      const whitelistIds = Array.isArray(account.renew_products)
+        ? account.renew_products
+        : [];
+      if (whitelistCell) {
+        whitelistCell.textContent = whitelistIds.length
+          ? whitelistIds.join(", ")
+          : "全部";
+      }
+      if (!account.api_key) {
+        if (pointsCell) {
+          pointsCell.textContent = "无 API Key";
+        }
+        setCellLines(expiryCell, ["无 API Key"], true);
+        return;
+      }
+      if (pointsCell) {
+        pointsCell.textContent = "加载中";
+      }
+      setCellLines(expiryCell, ["加载中"]);
+      try {
+        const result = await apiFetch(`/api/servers/summary/${account.id}`);
+        if (pointsCell) {
+          pointsCell.textContent =
+            typeof result.points === "number" ? result.points : "未知";
+        }
+        const servers = Array.isArray(result.servers) ? result.servers : [];
+        const filtered =
+          whitelistIds.length > 0
+            ? servers.filter((item) => whitelistIds.includes(Number(item.id)))
+            : servers;
+        if (filtered.length === 0) {
+          setCellLines(
+            expiryCell,
+            [whitelistIds.length ? "白名单无匹配服务器" : "无服务器"],
+            true
+          );
+        } else {
+          setCellLines(expiryCell, filtered.map(formatServerLine));
+        }
+      } catch (err) {
+        if (pointsCell) {
+          pointsCell.textContent = "获取失败";
+        }
+        setCellLines(expiryCell, ["获取失败"], true);
+      }
+    })
+  );
 }
 
 async function loadSettings() {

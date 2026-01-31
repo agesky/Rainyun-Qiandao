@@ -53,28 +53,7 @@
         </div>
 
         <div id="tab-main" class="tab-content">
-          <div class="panel-body grid">
-          <div class="card">
-            <div class="card-header">
-              <h3>账户列表</h3>
-              <button id="refresh-accounts" class="ghost-btn">刷新</button>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>名称</th>
-                    <th>启用</th>
-                    <th>状态</th>
-                    <th>最近签到</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody id="accounts-body"></tbody>
-              </table>
-            </div>
-          </div>
-
+          <div class="panel-body">
           <div class="card" id="account-form-card">
             <div class="card-header">
               <h3 id="account-form-title">新增账户</h3>
@@ -109,6 +88,29 @@
                 <span>启用账户</span>
               </label>
               <button id="save-account" class="primary-btn full">保存账户</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3>账户列表</h3>
+              <button id="refresh-accounts" class="ghost-btn">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>启用</th>
+                    <th>状态</th>
+                    <th>最近签到</th>
+                    <th>当前积分</th>
+                    <th>白名单产品</th>
+                    <th>到期时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="accounts-body"></tbody>
+              </table>
             </div>
           </div>
           </div>
