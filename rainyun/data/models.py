@@ -78,6 +78,17 @@ def _read_dict_str(data: Mapping[str, Any], key: str) -> dict[str, str]:
     return result
 
 
+def _read_list_dict(data: Mapping[str, Any], key: str) -> list[dict[str, Any]]:
+    value = data.get(key)
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            result.append(dict(item))
+    return result
+
+
 @dataclass
 class TokenConfig:
     """Token 配置。"""
@@ -192,6 +203,7 @@ class Settings:
     captcha_save_samples: bool = False
     skip_push_title: str = ""
     notify_config: dict[str, str] = field(default_factory=dict)
+    notify_channels: list[dict[str, Any]] = field(default_factory=list)
     auth: AuthConfig = field(default_factory=AuthConfig)
 
     @classmethod
@@ -215,6 +227,7 @@ class Settings:
             captcha_save_samples=_read_bool(payload, "captcha_save_samples", False),
             skip_push_title=_read_str(payload, "skip_push_title", ""),
             notify_config=_read_dict_str(payload, "notify_config"),
+            notify_channels=_read_list_dict(payload, "notify_channels"),
             auth=AuthConfig.from_dict(payload.get("auth")),
         )
 
@@ -237,6 +250,7 @@ class Settings:
             "captcha_save_samples": self.captcha_save_samples,
             "skip_push_title": self.skip_push_title,
             "notify_config": dict(self.notify_config),
+            "notify_channels": list(self.notify_channels),
             "auth": self.auth.to_dict(),
         }
 

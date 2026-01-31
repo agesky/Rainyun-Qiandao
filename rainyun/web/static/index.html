@@ -152,6 +152,89 @@
             </div>
             <div class="card">
               <div class="card-header">
+                <h3>通知渠道</h3>
+                <div class="card-actions">
+                  <button id="add-notify" class="ghost-btn">新增渠道</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>类型</th>
+                      <th>启用</th>
+                      <th>目标</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="notify-body"></tbody>
+                </table>
+              </div>
+              <div id="notify-form" class="form-grid hidden">
+                <label class="field">
+                  <span>渠道名称</span>
+                  <input id="notify-name" placeholder="自定义名称" />
+                </label>
+                <label class="field">
+                  <span>类型</span>
+                  <select id="notify-type"></select>
+                </label>
+                <label class="field checkbox">
+                  <input id="notify-enabled" type="checkbox" checked />
+                  <span>启用渠道</span>
+                </label>
+                <div id="notify-fields-console" class="notify-fields hidden">
+                  <p class="field-tip">控制台输出无需额外配置。</p>
+                </div>
+                <div id="notify-fields-serverj" class="notify-fields hidden">
+                  <label class="field full">
+                    <span>Server酱 PUSH_KEY</span>
+                    <input id="notify-push-key" placeholder="SCTxxxx 或 PUSH_KEY" />
+                  </label>
+                </div>
+                <div id="notify-fields-telegram" class="notify-fields hidden">
+                  <label class="field">
+                    <span>Telegram Bot Token</span>
+                    <input id="notify-tg-token" placeholder="123456:ABCDEF" />
+                  </label>
+                  <label class="field">
+                    <span>Telegram 用户ID</span>
+                    <input id="notify-tg-user" placeholder="123456789" />
+                  </label>
+                  <label class="field full">
+                    <span>Telegram API Host（可选）</span>
+                    <input id="notify-tg-host" placeholder="https://api.telegram.org" />
+                  </label>
+                </div>
+                <div id="notify-fields-pushplus" class="notify-fields hidden">
+                  <label class="field">
+                    <span>PushPlus Token</span>
+                    <input id="notify-pushplus-token" placeholder="pushplus token" />
+                  </label>
+                  <label class="field">
+                    <span>PushPlus 群组编码（可选）</span>
+                    <input id="notify-pushplus-user" placeholder="group code" />
+                  </label>
+                </div>
+                <div id="notify-fields-bark" class="notify-fields hidden">
+                  <label class="field full">
+                    <span>Bark 推送地址</span>
+                    <input id="notify-bark-push" placeholder="https://api.day.app/xxxx" />
+                  </label>
+                </div>
+                <div id="notify-fields-custom" class="notify-fields hidden">
+                  <label class="field full">
+                    <span>自定义 JSON 配置</span>
+                    <textarea id="notify-custom-config" rows="6" placeholder="{ }"></textarea>
+                  </label>
+                </div>
+                <button id="save-notify" class="primary-btn full">保存渠道</button>
+                <button id="cancel-notify" class="ghost-btn full">取消编辑</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
                 <h3>高级设置</h3>
               </div>
               <div class="form-grid">
@@ -206,10 +289,6 @@
                 <label class="field full">
                   <span>跳过推送标题（换行分隔）</span>
                   <textarea id="setting-skip-push-title" rows="3"></textarea>
-                </label>
-                <label class="field full">
-                  <span>通知配置 JSON（notify_config）</span>
-                  <textarea id="setting-notify-config" rows="6" placeholder="{ }"></textarea>
                 </label>
               </div>
             </div>

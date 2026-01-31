@@ -172,6 +172,19 @@ h1 {
   color: var(--muted);
 }
 
+.field-tip {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notify-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  grid-column: 1 / -1;
+}
+
 .field input {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid transparent;

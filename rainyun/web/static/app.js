@@ -53,10 +53,28 @@ const settingCaptchaRetryLimit = document.getElementById("setting-captcha-retry-
 const settingCaptchaRetryUnlimited = document.getElementById("setting-captcha-retry-unlimited");
 const settingCaptchaSaveSamples = document.getElementById("setting-captcha-save-samples");
 const settingSkipPushTitle = document.getElementById("setting-skip-push-title");
-const settingNotifyConfig = document.getElementById("setting-notify-config");
 const saveSettingsBtn = document.getElementById("save-settings");
 
+const notifyBody = document.getElementById("notify-body");
+const addNotifyBtn = document.getElementById("add-notify");
+const notifyForm = document.getElementById("notify-form");
+const notifyName = document.getElementById("notify-name");
+const notifyType = document.getElementById("notify-type");
+const notifyEnabled = document.getElementById("notify-enabled");
+const notifyPushKey = document.getElementById("notify-push-key");
+const notifyTgToken = document.getElementById("notify-tg-token");
+const notifyTgUser = document.getElementById("notify-tg-user");
+const notifyTgHost = document.getElementById("notify-tg-host");
+const notifyPushPlusToken = document.getElementById("notify-pushplus-token");
+const notifyPushPlusUser = document.getElementById("notify-pushplus-user");
+const notifyBarkPush = document.getElementById("notify-bark-push");
+const notifyCustomConfig = document.getElementById("notify-custom-config");
+const saveNotifyBtn = document.getElementById("save-notify");
+const cancelNotifyBtn = document.getElementById("cancel-notify");
+
 let editingId = null;
+let editingNotifyId = null;
+let notifyChannels = [];
 let logTimer = null;
 
 function getToken() {
@@ -76,6 +94,311 @@ function showToast(message, type = "success") {
   toast.className = `toast ${type}`;
   toast.classList.remove("hidden");
   setTimeout(() => toast.classList.add("hidden"), 2800);
+}
+
+function maskValue(raw) {
+  if (!raw) return "";
+  if (raw.length <= 6) return raw;
+  return `${raw.slice(0, 3)}***${raw.slice(-3)}`;
+}
+
+function normalizeNotifyChannels(settings) {
+  const raw = settings.notify_channels;
+  if (Array.isArray(raw) && raw.length) {
+    return raw.map((item) => ({
+      id: item.id || `notify_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      name: item.name || "",
+      type: item.type || "custom",
+      enabled: item.enabled !== false,
+      config: typeof item.config === "object" && item.config ? item.config : {},
+    }));
+  }
+  return buildChannelsFromLegacy(settings.notify_config || {});
+}
+
+function buildChannelsFromLegacy(config) {
+  const channels = [];
+  if (!config || typeof config !== "object") {
+    return channels;
+  }
+  const legacy = { ...config };
+  if (legacy.CONSOLE && ["true", true, 1, "1"].includes(legacy.CONSOLE)) {
+    channels.push({
+      id: `notify_${Date.now()}_console`,
+      name: "控制台",
+      type: "console",
+      enabled: true,
+      config: { CONSOLE: "true" },
+    });
+    delete legacy.CONSOLE;
+  }
+  if (legacy.PUSH_KEY) {
+    channels.push({
+      id: `notify_${Date.now()}_serverj`,
+      name: "Server酱",
+      type: "serverj",
+      enabled: true,
+      config: { PUSH_KEY: String(legacy.PUSH_KEY) },
+    });
+    delete legacy.PUSH_KEY;
+  }
+  if (legacy.TG_BOT_TOKEN && legacy.TG_USER_ID) {
+    const tgConfig = {
+      TG_BOT_TOKEN: String(legacy.TG_BOT_TOKEN),
+      TG_USER_ID: String(legacy.TG_USER_ID),
+    };
+    if (legacy.TG_API_HOST) {
+      tgConfig.TG_API_HOST = String(legacy.TG_API_HOST);
+    }
+    channels.push({
+      id: `notify_${Date.now()}_telegram`,
+      name: "Telegram",
+      type: "telegram",
+      enabled: true,
+      config: tgConfig,
+    });
+    delete legacy.TG_BOT_TOKEN;
+    delete legacy.TG_USER_ID;
+    delete legacy.TG_API_HOST;
+  }
+  if (legacy.PUSH_PLUS_TOKEN) {
+    const pushPlusConfig = {
+      PUSH_PLUS_TOKEN: String(legacy.PUSH_PLUS_TOKEN),
+    };
+    if (legacy.PUSH_PLUS_USER) {
+      pushPlusConfig.PUSH_PLUS_USER = String(legacy.PUSH_PLUS_USER);
+    }
+    channels.push({
+      id: `notify_${Date.now()}_pushplus`,
+      name: "PushPlus",
+      type: "pushplus",
+      enabled: true,
+      config: pushPlusConfig,
+    });
+    delete legacy.PUSH_PLUS_TOKEN;
+    delete legacy.PUSH_PLUS_USER;
+  }
+  if (legacy.BARK_PUSH) {
+    channels.push({
+      id: `notify_${Date.now()}_bark`,
+      name: "Bark",
+      type: "bark",
+      enabled: true,
+      config: { BARK_PUSH: String(legacy.BARK_PUSH) },
+    });
+    delete legacy.BARK_PUSH;
+  }
+  const leftoverKeys = Object.keys(legacy);
+  if (leftoverKeys.length) {
+    channels.push({
+      id: `notify_${Date.now()}_custom`,
+      name: "高级 JSON",
+      type: "custom",
+      enabled: true,
+      config: legacy,
+    });
+  }
+  return channels;
+}
+
+function buildNotifyTypeOptions() {
+  if (!notifyType) return;
+  const options = [
+    { value: "serverj", label: "Server酱" },
+    { value: "telegram", label: "Telegram" },
+    { value: "pushplus", label: "PushPlus" },
+    { value: "bark", label: "Bark" },
+    { value: "console", label: "控制台" },
+    { value: "custom", label: "自定义 JSON" },
+  ];
+  notifyType.innerHTML = "";
+  options.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.value;
+    option.textContent = item.label;
+    notifyType.appendChild(option);
+  });
+}
+
+const notifyTypeLabels = {
+  serverj: "Server酱",
+  telegram: "Telegram",
+  pushplus: "PushPlus",
+  bark: "Bark",
+  console: "控制台",
+  custom: "自定义 JSON",
+};
+
+function setNotifyFormVisible(visible) {
+  if (!notifyForm) return;
+  notifyForm.classList.toggle("hidden", !visible);
+}
+
+function resetNotifyForm() {
+  editingNotifyId = null;
+  if (notifyName) notifyName.value = "";
+  if (notifyType) notifyType.value = "serverj";
+  if (notifyEnabled) notifyEnabled.checked = true;
+  if (notifyPushKey) notifyPushKey.value = "";
+  if (notifyTgToken) notifyTgToken.value = "";
+  if (notifyTgUser) notifyTgUser.value = "";
+  if (notifyTgHost) notifyTgHost.value = "";
+  if (notifyPushPlusToken) notifyPushPlusToken.value = "";
+  if (notifyPushPlusUser) notifyPushPlusUser.value = "";
+  if (notifyBarkPush) notifyBarkPush.value = "";
+  if (notifyCustomConfig) notifyCustomConfig.value = "";
+  toggleNotifyFields("serverj");
+}
+
+function toggleNotifyFields(type) {
+  const fieldIds = [
+    "notify-fields-console",
+    "notify-fields-serverj",
+    "notify-fields-telegram",
+    "notify-fields-pushplus",
+    "notify-fields-bark",
+    "notify-fields-custom",
+  ];
+  fieldIds.forEach((id) => {
+    const block = document.getElementById(id);
+    if (!block) return;
+    block.classList.toggle("hidden", !id.includes(type));
+  });
+}
+
+function summarizeNotifyChannel(channel) {
+  const type = channel.type;
+  const cfg = channel.config || {};
+  if (type === "serverj") return maskValue(cfg.PUSH_KEY || "");
+  if (type === "telegram") return `用户 ${cfg.TG_USER_ID || "-"}`;
+  if (type === "pushplus")
+    return `Token ${maskValue(cfg.PUSH_PLUS_TOKEN || "")}`;
+  if (type === "bark") return (cfg.BARK_PUSH || "").replace(/https?:\/\//, "");
+  if (type === "console") return "控制台输出";
+  if (type === "custom") return "自定义 JSON";
+  return "-";
+}
+
+function renderNotifyList() {
+  if (!notifyBody) return;
+  notifyBody.innerHTML = "";
+  notifyChannels.forEach((channel) => {
+    const typeLabel = notifyTypeLabels[channel.type] || channel.type || "-";
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${channel.name || "-"}</td>
+      <td>${typeLabel}</td>
+      <td>${channel.enabled ? "是" : "否"}</td>
+      <td>${summarizeNotifyChannel(channel)}</td>
+      <td>
+        <button class="ghost-btn" data-action="edit" data-id="${channel.id}">编辑</button>
+        <button class="ghost-btn" data-action="test" data-id="${channel.id}">测试</button>
+        <button class="ghost-btn" data-action="delete" data-id="${channel.id}">删除</button>
+      </td>
+    `;
+    notifyBody.appendChild(row);
+  });
+}
+
+function buildNotifyConfigFromForm(type) {
+  if (type === "console") {
+    return { CONSOLE: "true" };
+  }
+  if (type === "serverj") {
+    const key = notifyPushKey.value.trim();
+    if (!key) {
+      throw new Error("请填写 Server酱 PUSH_KEY");
+    }
+    return { PUSH_KEY: key };
+  }
+  if (type === "telegram") {
+    const token = notifyTgToken.value.trim();
+    const user = notifyTgUser.value.trim();
+    if (!token || !user) {
+      throw new Error("Telegram 需要同时填写 Bot Token 与用户ID");
+    }
+    const config = { TG_BOT_TOKEN: token, TG_USER_ID: user };
+    const host = notifyTgHost.value.trim();
+    if (host) {
+      config.TG_API_HOST = host;
+    }
+    return config;
+  }
+  if (type === "pushplus") {
+    const token = notifyPushPlusToken.value.trim();
+    if (!token) {
+      throw new Error("PushPlus 需要填写 Token");
+    }
+    const config = { PUSH_PLUS_TOKEN: token };
+    const user = notifyPushPlusUser.value.trim();
+    if (user) {
+      config.PUSH_PLUS_USER = user;
+    }
+    return config;
+  }
+  if (type === "bark") {
+    const push = notifyBarkPush.value.trim();
+    if (!push) {
+      throw new Error("请填写 Bark 推送地址");
+    }
+    return { BARK_PUSH: push };
+  }
+  if (type === "custom") {
+    const raw = notifyCustomConfig.value.trim();
+    if (!raw) {
+      throw new Error("请填写自定义 JSON");
+    }
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("自定义 JSON 需为对象");
+    }
+    return parsed;
+  }
+  return {};
+}
+
+function saveNotifyChannel() {
+  const type = notifyType.value;
+  const name = notifyName.value.trim();
+  const enabled = notifyEnabled.checked;
+  const config = buildNotifyConfigFromForm(type);
+  const payload = {
+    id:
+      editingNotifyId ||
+      `notify_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+    name: name || type,
+    type,
+    enabled,
+    config,
+  };
+  if (editingNotifyId) {
+    notifyChannels = notifyChannels.map((item) =>
+      item.id === editingNotifyId ? payload : item
+    );
+  } else {
+    notifyChannels.push(payload);
+  }
+  renderNotifyList();
+  resetNotifyForm();
+  setNotifyFormVisible(false);
+}
+
+function fillNotifyForm(channel) {
+  editingNotifyId = channel.id;
+  notifyName.value = channel.name || "";
+  notifyType.value = channel.type || "serverj";
+  notifyEnabled.checked = channel.enabled !== false;
+  const cfg = channel.config || {};
+  notifyPushKey.value = cfg.PUSH_KEY || "";
+  notifyTgToken.value = cfg.TG_BOT_TOKEN || "";
+  notifyTgUser.value = cfg.TG_USER_ID || "";
+  notifyTgHost.value = cfg.TG_API_HOST || "";
+  notifyPushPlusToken.value = cfg.PUSH_PLUS_TOKEN || "";
+  notifyPushPlusUser.value = cfg.PUSH_PLUS_USER || "";
+  notifyBarkPush.value = cfg.BARK_PUSH || "";
+  notifyCustomConfig.value = JSON.stringify(cfg, null, 2);
+  toggleNotifyFields(notifyType.value);
+  setNotifyFormVisible(true);
 }
 
 function setCellLines(cell, lines, muted = false) {
@@ -463,8 +786,8 @@ async function loadSettings() {
   settingCaptchaRetryUnlimited.checked = !!settings.captcha_retry_unlimited;
   settingCaptchaSaveSamples.checked = !!settings.captcha_save_samples;
   settingSkipPushTitle.value = settings.skip_push_title || "";
-  const notifyConfig = settings.notify_config || {};
-  settingNotifyConfig.value = JSON.stringify(notifyConfig, null, 2);
+  notifyChannels = normalizeNotifyChannels(settings);
+  renderNotifyList();
 }
 
 async function loadAll() {
@@ -559,6 +882,18 @@ async function runCheckin() {
   }
 }
 
+async function testNotifyChannel(id) {
+  try {
+    await apiFetch("/api/system/notify/test", {
+      method: "POST",
+      body: JSON.stringify({ channel_id: id }),
+    });
+    showToast("测试通知已发送");
+  } catch (err) {
+    showToast(err.message || "测试发送失败", "error");
+  }
+}
+
 async function runCheckinForAccount(id) {
   try {
     await apiFetch(`/api/actions/checkin/${id}`, { method: "POST" });
@@ -633,20 +968,13 @@ function switchTab(tabName) {
 }
 
 async function saveSettings() {
-  let notifyConfig = {};
-  const notifyRaw = settingNotifyConfig.value.trim();
-  if (notifyRaw) {
-    try {
-      notifyConfig = JSON.parse(notifyRaw);
-    } catch (err) {
-      showToast("通知配置 JSON 无效", "error");
-      return;
-    }
-    if (typeof notifyConfig !== "object" || Array.isArray(notifyConfig)) {
-      showToast("通知配置需为对象", "error");
-      return;
-    }
-  }
+  const notifyChannelsPayload = notifyChannels.map((item) => ({
+    id: item.id,
+    name: item.name,
+    type: item.type,
+    enabled: item.enabled !== false,
+    config: typeof item.config === "object" && item.config ? item.config : {},
+  }));
   const cronSchedule = buildCronFromUI();
   settingCron.value = cronSchedule;
   updateCronPreview();
@@ -667,7 +995,8 @@ async function saveSettings() {
     captcha_retry_unlimited: settingCaptchaRetryUnlimited.checked,
     captcha_save_samples: settingCaptchaSaveSamples.checked,
     skip_push_title: settingSkipPushTitle.value.trim(),
-    notify_config: notifyConfig,
+    notify_config: {},
+    notify_channels: notifyChannelsPayload,
   };
   try {
     await apiFetch("/api/system/settings", {
@@ -703,6 +1032,27 @@ accountsBody.addEventListener("click", async (event) => {
   }
 });
 
+if (notifyBody) {
+  notifyBody.addEventListener("click", (event) => {
+    const action = event.target.getAttribute("data-action");
+    const id = event.target.getAttribute("data-id");
+    if (!action || !id) return;
+    if (action === "edit") {
+      const channel = notifyChannels.find((item) => item.id === id);
+      if (channel) {
+        fillNotifyForm(channel);
+      }
+    }
+    if (action === "delete") {
+      notifyChannels = notifyChannels.filter((item) => item.id !== id);
+      renderNotifyList();
+    }
+    if (action === "test") {
+      testNotifyChannel(id);
+    }
+  });
+}
+
 loginBtn.addEventListener("click", handleLogin);
 logoutBtn.addEventListener("click", () => {
   setToken(null);
@@ -714,6 +1064,33 @@ renewBtn.addEventListener("click", runRenewAll);
 resetFormBtn.addEventListener("click", resetForm);
 saveAccountBtn.addEventListener("click", saveAccount);
 saveSettingsBtn.addEventListener("click", saveSettings);
+
+if (addNotifyBtn) {
+  addNotifyBtn.addEventListener("click", () => {
+    resetNotifyForm();
+    setNotifyFormVisible(true);
+  });
+}
+if (saveNotifyBtn) {
+  saveNotifyBtn.addEventListener("click", () => {
+    try {
+      saveNotifyChannel();
+    } catch (err) {
+      showToast(err.message || "保存渠道失败", "error");
+    }
+  });
+}
+if (cancelNotifyBtn) {
+  cancelNotifyBtn.addEventListener("click", () => {
+    resetNotifyForm();
+    setNotifyFormVisible(false);
+  });
+}
+if (notifyType) {
+  notifyType.addEventListener("change", () => {
+    toggleNotifyFields(notifyType.value);
+  });
+}
 
 toggleAccountFormBtn.addEventListener("click", () => {
   const isHidden = accountFormBody.classList.contains("hidden");
@@ -758,6 +1135,8 @@ if (cronMode) {
 initCronOptions();
 updateCronModeUI();
 setAccountFormVisible(false);
+buildNotifyTypeOptions();
+resetNotifyForm();
 switchTab("main");
 
 if (getToken()) {

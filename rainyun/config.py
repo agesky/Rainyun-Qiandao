@@ -281,6 +281,7 @@ class Config:
     chromedriver_path: str
     skip_push_title: str
     push_config: dict[str, str] = field(default_factory=dict)
+    notify_channels: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
@@ -359,6 +360,7 @@ class Config:
             chromedriver_path=chromedriver_path,
             skip_push_title=skip_push_title,
             push_config=push_config,
+            notify_channels=[],
         )
 
     @classmethod
@@ -419,8 +421,12 @@ class Config:
         skip_push_title = _coerce_str_value(payload.get("skip_push_title"), base.skip_push_title)
 
         push_config = base.push_config.copy()
+        notify_channels: list[dict[str, Any]] = []
         if "push_config" in payload:
             push_config.update(_coerce_dict_str_value(payload.get("push_config"), {}))
+        raw_channels = payload.get("notify_channels")
+        if isinstance(raw_channels, list):
+            notify_channels = [dict(item) for item in raw_channels if isinstance(item, Mapping)]
 
         return cls(
             app_base_url=app_base_url,
@@ -454,6 +460,7 @@ class Config:
             chromedriver_path=chromedriver_path,
             skip_push_title=skip_push_title,
             push_config=push_config,
+            notify_channels=notify_channels,
         )
 
     @classmethod
@@ -475,6 +482,7 @@ class Config:
         captcha_save_samples = base.captcha_save_samples
         skip_push_title = base.skip_push_title
         push_config = DEFAULT_PUSH_CONFIG.copy()
+        notify_channels: list[dict[str, Any]] = []
 
         if settings is not None:
             auto_renew = getattr(settings, "auto_renew", auto_renew)
@@ -499,6 +507,9 @@ class Config:
                 for key, value in notify_config.items():
                     if isinstance(key, str) and isinstance(value, str):
                         push_config[key] = value
+            raw_channels = getattr(settings, "notify_channels", None)
+            if isinstance(raw_channels, list):
+                notify_channels = [dict(item) for item in raw_channels if isinstance(item, Mapping)]
 
         renew_product_ids = list(getattr(account, "renew_products", []))
         cookie_file = base.cookie_file
@@ -541,6 +552,7 @@ class Config:
             captcha_save_samples=captcha_save_samples,
             skip_push_title=skip_push_title,
             push_config=push_config,
+            notify_channels=notify_channels,
         )
 
 
