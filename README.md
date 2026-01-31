@@ -21,6 +21,13 @@ cp .env.example .env
 docker-compose up --build
 ```
 
+## Web 管理面板
+
+- 默认启动地址：`http://localhost:8000`
+- 使用 `/api/login` 登录（首次登录会初始化密码哈希）
+- 可通过 `WEB_ENABLED=false` 关闭 Web 服务
+- 关键参数：`WEB_PORT`、`WEB_HOST`、`DATA_PATH`（见 `.env.example`）
+
 ## 入口与结构
 
 - 统一入口为 `python -m rainyun`（Docker/本地一致）。  
