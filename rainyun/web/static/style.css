@@ -229,6 +229,16 @@ h1 {
   font-size: 12px;
 }
 
+.toggle-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 0;
+}
+
 .switch {
   position: relative;
   display: inline-block;
