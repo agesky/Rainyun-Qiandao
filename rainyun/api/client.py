@@ -55,6 +55,8 @@ class RainyunAPI:
         """
         url = f"{self.api_base_url}{endpoint}"
         last_error = None
+        user = self.config.display_name or self.config.rainyun_user
+        prefix = f"用户 {user} " if user else ""
 
         for attempt in range(1, self.max_retries + 1):
             try:
@@ -91,7 +93,7 @@ class RainyunAPI:
                 # 网络层错误（连接超时、DNS 解析失败等），可以重试
                 last_error = e
                 if attempt < self.max_retries:
-                    logger.warning(f"请求失败 (第 {attempt} 次): {e}，{self.retry_delay}s 后重试...")
+                    logger.warning(f"{prefix}请求失败 (第 {attempt} 次): {e}，{self.retry_delay}s 后重试...")
                     time.sleep(self.retry_delay)
                 continue
 

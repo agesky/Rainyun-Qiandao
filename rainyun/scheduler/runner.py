@@ -172,7 +172,9 @@ class MultiAccountRunner:
             if not account.enabled:
                 continue
             account_id = str(getattr(account, "id", "") or "").strip()
-            account_name = str(getattr(account, "name", "") or "").strip() or account_id
+            account_name = str(getattr(account, "name", "") or "").strip()
+            account_username = str(getattr(account, "username", "") or "").strip()
+            account_name = account_name or account_username or account_id
             if not getattr(account, "api_key", ""):
                 results.append(
                     AccountRenewResult(
@@ -208,7 +210,8 @@ class MultiAccountRunner:
                     )
                 )
             except Exception as exc:
-                logger.error("账户 %s 续费检查失败: %s", account_id, exc)
+                user_label = account_name or account_username or account_id or "unknown"
+                logger.error("用户 %s 续费检查失败: %s", user_label, exc)
                 results.append(
                     AccountRenewResult(
                         account_id=account_id,
@@ -233,6 +236,10 @@ class MultiAccountRunner:
         temp_dir: str,
     ) -> AccountRunResult:
         config = Config.from_account(account, settings)
+        account_id = str(getattr(account, "id", "") or "").strip()
+        account_name = str(getattr(account, "name", "") or "").strip()
+        account_username = str(getattr(account, "username", "") or "").strip()
+        user_label = account_name or account_username or account_id or "unknown"
         configure(config)
         api_client = RainyunAPI(config.rainyun_api_key, config=config)
         ctx = RuntimeContext(
@@ -248,7 +255,7 @@ class MultiAccountRunner:
         try:
             driver.delete_all_cookies()
         except Exception as exc:
-            logger.warning("清理 cookies 失败: %s", exc)
+            logger.warning("用户 %s 清理 cookies 失败: %s", user_label, exc)
 
         try:
             start_points = 0
@@ -256,7 +263,7 @@ class MultiAccountRunner:
                 try:
                     start_points = api_client.get_user_points()
                 except Exception as exc:
-                    logger.warning("获取初始积分失败: %s", exc)
+                    logger.warning("用户 %s 获取初始积分失败: %s", user_label, exc)
 
             login_page = LoginPage(ctx, captcha_handler=process_captcha)
             reward_page = RewardPage(ctx, captcha_handler=process_captcha)
@@ -281,7 +288,7 @@ class MultiAccountRunner:
                 earned_points=reward_result.get("earned"),
             )
         except Exception as exc:
-            logger.error("账户 %s 签到失败: %s", getattr(account, "id", "unknown"), exc)
+            logger.error("用户 %s 签到失败: %s", user_label, exc)
             return self._mark_result(account, success=False, message=str(exc), status="failed")
 
     def _mark_result(
@@ -296,12 +303,15 @@ class MultiAccountRunner:
         now = datetime.now().isoformat()
         account.last_checkin = now
         account.last_status = "success" if success else message or "failed"
+        account_id = str(getattr(account, "id", "") or "").strip()
+        account_name = str(getattr(account, "name", "") or "").strip()
+        account_username = str(getattr(account, "username", "") or "").strip()
+        account_name = account_name or account_username or account_id
+        user_label = account_name or account_username or account_id or "unknown"
         try:
             self.store.update_account(account)
         except Exception as exc:
-            logger.error("回写账户状态失败: %s", exc)
-        account_id = str(getattr(account, "id", "") or "").strip()
-        account_name = str(getattr(account, "name", "") or "").strip() or account_id
+            logger.error("用户 %s 回写账户状态失败: %s", user_label, exc)
         return AccountRunResult(
             account_id=account_id,
             account_name=account_name,

@@ -25,22 +25,23 @@ class LoginPage:
 
     def check_login_status(self) -> bool:
         """检查是否已登录。"""
-        user = self.ctx.config.rainyun_user
+        user_label = self.ctx.config.display_name or self.ctx.config.rainyun_user
         self.ctx.driver.get(build_app_url(self.ctx.config, "/dashboard"))
         time.sleep(3)
         # 如果跳转到登录页面，说明 cookie 失效
         if "login" in self.ctx.driver.current_url:
-            logger.info(f"用户 {user} Cookie 已失效，需要重新登录")
+            logger.info(f"用户 {user_label} Cookie 已失效，需要重新登录")
             return False
         # 检查是否成功加载 dashboard
         if self.ctx.driver.current_url == build_app_url(self.ctx.config, "/dashboard"):
-            logger.info(f"用户 {user} Cookie 有效，已登录")
+            logger.info(f"用户 {user_label} Cookie 有效，已登录")
             return True
         return False
 
     def login(self, user: str, pwd: str) -> bool:
         """执行登录流程。"""
-        logger.info(f"用户 {user} 发起登录请求")
+        user_label = self.ctx.config.display_name or user
+        logger.info(f"用户 {user_label} 发起登录请求")
         self.ctx.driver.get(build_app_url(self.ctx.config, "/auth/login"))
         try:
             username = self.ctx.wait.until(EC.visibility_of_element_located((By.NAME, "login-field")))
@@ -53,27 +54,27 @@ class LoginPage:
             password.send_keys(pwd)
             login_button.click()
         except TimeoutException:
-            logger.error(f"用户 {user} 页面加载超时，请尝试延长超时时间或切换到国内网络环境！")
+            logger.error(f"用户 {user_label} 页面加载超时，请尝试延长超时时间或切换到国内网络环境！")
             return False
         try:
             self.ctx.wait.until(EC.visibility_of_element_located((By.ID, "tcaptcha_iframe_dy")))
-            logger.warning(f"用户 {user} 触发验证码！")
+            logger.warning(f"用户 {user_label} 触发验证码！")
             self.ctx.driver.switch_to.frame("tcaptcha_iframe_dy")
             if not self.captcha_handler(self.ctx):
-                logger.error(f"用户 {user} 登录验证码识别失败")
+                logger.error(f"用户 {user_label} 登录验证码识别失败")
                 return False
         except TimeoutException:
-            logger.info(f"用户 {user} 未触发验证码")
+            logger.info(f"用户 {user_label} 未触发验证码")
         time.sleep(2)  # 给页面一点点缓冲时间
         self.ctx.driver.switch_to.default_content()
         try:
             # 使用显式等待检测登录是否成功（通过判断 URL 变化）
             self.ctx.wait.until(EC.url_contains("dashboard"))
-            logger.info(f"用户 {user} 登录成功！")
+            logger.info(f"用户 {user_label} 登录成功！")
             save_cookies(self.ctx.driver, self.ctx.config)
             return True
         except TimeoutException:
-            logger.error(f"用户 {user} 登录超时或失败！当前 URL: {self.ctx.driver.current_url}")
+            logger.error(f"用户 {user_label} 登录超时或失败！当前 URL: {self.ctx.driver.current_url}")
             return False
 
 
@@ -86,14 +87,14 @@ class RewardPage:
         self.ctx.driver.get(build_app_url(self.ctx.config, "/account/reward/earn"))
 
     def handle_daily_reward(self, start_points: int) -> dict:
-        user = self.ctx.config.rainyun_user
+        user_label = self.ctx.config.display_name or self.ctx.config.rainyun_user
         self.open()
         try:
             # 使用显示等待寻找按钮
             earn = self.ctx.wait.until(
                 EC.presence_of_element_located((By.XPATH, XPATH_CONFIG["SIGN_IN_BTN"]))
             )
-            logger.info(f"用户 {user} 点击赚取积分")
+            logger.info(f"用户 {user_label} 点击赚取积分")
             earn.click()
         except TimeoutException:
             already_signed_patterns = ["已领取", "已完成", "已签到", "明日再来"]
@@ -101,7 +102,7 @@ class RewardPage:
             for pattern in already_signed_patterns:
                 if pattern in page_source:
                     logger.info(
-                        f":down_arrow: 用户 {user} 今日已签到（检测到：{pattern}），跳过签到流程"
+                        f":down_arrow: 用户 {user_label} 今日已签到（检测到：{pattern}），跳过签到流程"
                     )
                     current_points, earned = self._log_points(start_points)
                     return {
@@ -111,16 +112,16 @@ class RewardPage:
                     }
             raise Exception("未找到签到按钮，且未检测到已签到状态，可能页面结构已变更")
 
-        logger.info(f"用户 {user} 处理验证码")
+        logger.info(f"用户 {user_label} 处理验证码")
         self.ctx.driver.switch_to.frame("tcaptcha_iframe_dy")
         if not self.captcha_handler(self.ctx):
             logger.error(
-                f"用户 {user} 验证码重试次数过多，签到失败。当前页面状态: {self.ctx.driver.current_url}"
+                f"用户 {user_label} 验证码重试次数过多，签到失败。当前页面状态: {self.ctx.driver.current_url}"
             )
             raise Exception("验证码识别重试次数过多，签到失败")
         self.ctx.driver.switch_to.default_content()
         current_points, earned = self._log_points(start_points)
-        logger.info(f"用户 {user} 签到成功")
+        logger.info(f"用户 {user_label} 签到成功")
         return {
             "status": "signed",
             "current_points": current_points,
@@ -128,14 +129,14 @@ class RewardPage:
         }
 
     def _log_points(self, start_points: int) -> tuple[int | None, int | None]:
-        user = self.ctx.config.rainyun_user
+        user_label = self.ctx.config.display_name or self.ctx.config.rainyun_user
         try:
             current_points = self.ctx.api.get_user_points()
             earned = current_points - start_points
             logger.info(
-                f"用户 {user} 当前剩余积分: {current_points} (本次获得 {earned} 分) | 约为 {current_points / self.ctx.config.points_to_cny_rate:.2f} 元"
+                f"用户 {user_label} 当前剩余积分: {current_points} (本次获得 {earned} 分) | 约为 {current_points / self.ctx.config.points_to_cny_rate:.2f} 元"
             )
             return current_points, earned
         except Exception:
-            logger.info(f"用户 {user} 无法通过 API 获取当前积分信息")
+            logger.info(f"用户 {user_label} 无法通过 API 获取当前积分信息")
             return None, None

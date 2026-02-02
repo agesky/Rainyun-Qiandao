@@ -282,6 +282,7 @@ class Config:
     skip_push_title: str
     push_config: dict[str, str] = field(default_factory=dict)
     notify_channels: list[dict[str, Any]] = field(default_factory=list)
+    display_name: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Config":
@@ -361,6 +362,7 @@ class Config:
             skip_push_title=skip_push_title,
             push_config=push_config,
             notify_channels=[],
+            display_name="",
         )
 
     @classmethod
@@ -461,6 +463,7 @@ class Config:
             skip_push_title=skip_push_title,
             push_config=push_config,
             notify_channels=notify_channels,
+            display_name="",
         )
 
     @classmethod
@@ -529,6 +532,9 @@ class Config:
             else:
                 account_key = "default"
         cookie_file = os.path.join(cookie_dir, f"cookies_{account_key}.json")
+        account_name = str(getattr(account, "name", "") or "").strip()
+        account_username = str(getattr(account, "username", "") or "").strip()
+        display_name = account_name or account_username or str(account_key)
 
         return replace(
             base,
@@ -555,6 +561,7 @@ class Config:
             skip_push_title=skip_push_title,
             push_config=push_config,
             notify_channels=notify_channels,
+            display_name=display_name,
         )
 
 

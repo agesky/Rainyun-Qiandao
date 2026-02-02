@@ -67,7 +67,9 @@ class BrowserSession:
             ops.add_argument("--disable-dev-shm-usage")
             # 低配模式：适用于 1核1G 小鸡
             if self.config.chrome_low_memory:
-                logger.info("启用 Chrome 低内存模式")
+                user = self.config.display_name or self.config.rainyun_user
+                prefix = f"用户 {user} " if user else ""
+                logger.info(f"{prefix}启用 Chrome 低内存模式")
                 # 注意：--single-process 在 Docker 容器中容易导致崩溃，不使用
                 ops.add_argument("--disable-extensions")
                 ops.add_argument("--disable-background-networking")

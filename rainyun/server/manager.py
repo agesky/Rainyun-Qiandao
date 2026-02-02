@@ -54,11 +54,13 @@ class ServerManager:
         self.renew_threshold = self.config.renew_threshold_days
         self.renew_product_ids = self.config.renew_product_ids
         self._whitelist_parse_error = self.config.renew_product_ids_parse_error
+        user = self.config.display_name or self.config.rainyun_user
+        self._user_prefix = f"用户 {user} " if user else ""
         if not self._whitelist_parse_error:
             if self.renew_product_ids:
-                logger.info(f"白名单模式：只续费产品 {self.renew_product_ids}")
+                logger.info(f"{self._user_prefix}白名单模式：只续费产品 {self.renew_product_ids}")
             else:
-                logger.info("白名单为空，将续费所有服务器")
+                logger.info(f"{self._user_prefix}白名单为空，将续费所有服务器")
 
     def get_all_servers(self) -> list:
         """
@@ -70,7 +72,7 @@ class ServerManager:
         servers = []
         try:
             server_ids = self.api.get_server_ids()
-            logger.info(f"找到 {len(server_ids)} 台服务器")
+            logger.info(f"{self._user_prefix}找到 {len(server_ids)} 台服务器")
 
             for sid in server_ids:
                 try:
@@ -80,7 +82,7 @@ class ServerManager:
                     expired_at = server_data.get("ExpDate", 0)
                     # 修复：ExpDate 缺失或无效时跳过该服务器，避免误续费
                     if not expired_at or expired_at <= 0:
-                        logger.warning(f"服务器 {sid} 的 ExpDate 无效 ({expired_at})，跳过")
+                        logger.warning(f"{self._user_prefix}服务器 {sid} 的 ExpDate 无效 ({expired_at})，跳过")
                         continue
                     # 服务器名：尝试从 EggType 获取，否则用默认名
                     # 注意：EggType 可能为 null，需要安全处理
@@ -99,7 +101,7 @@ class ServerManager:
                         )
                     except (ValueError, TypeError):
                         logger.warning(
-                            f"服务器 {sid} 的续费价格无效 ({raw_price})，使用默认值 {self.config.default_renew_cost_7_days}"
+                            f"{self._user_prefix}服务器 {sid} 的续费价格无效 ({raw_price})，使用默认值 {self.config.default_renew_cost_7_days}"
                         )
                         renew_price = self.config.default_renew_cost_7_days
                     server = ServerInfo(
@@ -110,13 +112,14 @@ class ServerManager:
                     )
                     servers.append(server)
                     logger.info(
-                        f"  - {server.name} (ID:{sid}): 到期 {server.expired_str}, 剩余 {server.days_remaining} 天, 续费 {renew_price} 积分/7天"
+                        f"{self._user_prefix}  - {server.name} (ID:{sid}): 到期 {server.expired_str}, "
+                        f"剩余 {server.days_remaining} 天, 续费 {renew_price} 积分/7天"
                     )
                 except RainyunAPIError as e:
-                    logger.error(f"获取服务器 {sid} 详情失败: {e}")
+                    logger.error(f"{self._user_prefix}获取服务器 {sid} 详情失败: {e}")
 
         except RainyunAPIError as e:
-            logger.error(f"获取服务器列表失败: {e}")
+            logger.error(f"{self._user_prefix}获取服务器列表失败: {e}")
 
         return servers
 
@@ -131,7 +134,9 @@ class ServerManager:
             return None
         shortage = total_renew_cost - points
         days_needed = (shortage // 500) + (1 if shortage % 500 else 0)
-        logger.warning(f"⚠️ 积分预警！当前 {points}，续费所需 {total_renew_cost}，缺口 {shortage}")
+        logger.warning(
+            f"{self._user_prefix}⚠️ 积分预警！当前 {points}，续费所需 {total_renew_cost}，缺口 {shortage}"
+        )
         return {
             "current": points,
             "needed": total_renew_cost,
@@ -149,7 +154,7 @@ class ServerManager:
         if self._whitelist_parse_error:
             return f"{server.name} 即将到期，但白名单配置错误，自动续费已禁用"
         if self.renew_product_ids and server.id not in self.renew_product_ids:
-            logger.info(f"  ↳ 跳过：不在白名单中 (ID: {server.id})")
+            logger.info(f"{self._user_prefix}  ↳ 跳过：不在白名单中 (ID: {server.id})")
             return f"{server.name} 即将到期，但不在续费白名单中"
         if not self.auto_renew:
             return f"{server.name} 即将到期，但自动续费已关闭"
@@ -157,16 +162,16 @@ class ServerManager:
         if result["points"] >= server.renew_price:
             try:
                 self.api.renew_server(server.id, days=7)
-                logger.info(f"✅ {server.name} 续费成功！消耗 {server.renew_price} 积分")
+                logger.info(f"{self._user_prefix}✅ {server.name} 续费成功！消耗 {server.renew_price} 积分")
                 result["points"] -= server.renew_price
                 status["renewed"] = True
                 result["renewed"].append(server.name)
                 return None
             except RainyunAPIError as e:
-                logger.error(f"❌ {server.name} 续费失败: {e}")
+                logger.error(f"{self._user_prefix}❌ {server.name} 续费失败: {e}")
                 return f"{server.name} 续费失败: {e}"
         warning = f"积分不足！{server.name} 需要 {server.renew_price}，当前 {result['points']}"
-        logger.warning(warning)
+        logger.warning(f"{self._user_prefix}{warning}")
         return warning
 
     def check_and_renew(self) -> dict:
@@ -193,7 +198,7 @@ class ServerManager:
 
         try:
             result["points"] = self.api.get_user_points()
-            logger.info(f"当前积分: {result['points']}")
+            logger.info(f"{self._user_prefix}当前积分: {result['points']}")
 
             servers = self.get_all_servers()
             result["points_warning"] = self._build_points_warning(servers, result["points"])
@@ -209,19 +214,22 @@ class ServerManager:
                 }
 
                 if server.days_remaining <= self.renew_threshold:
-                    logger.warning(f"⚠️ {server.name} 即将到期！剩余 {server.days_remaining} 天")
+                    logger.warning(
+                        f"{self._user_prefix}⚠️ {server.name} 即将到期！剩余 {server.days_remaining} 天"
+                    )
                     warning = self._attempt_auto_renew(server, result, server_status)
                     if warning:
                         result["warnings"].append(warning)
                 else:
                     logger.info(
-                        f"{server.name} 剩余 {server.days_remaining} 天，未达到续费阈值 {self.renew_threshold} 天，跳过续费"
+                        f"{self._user_prefix}{server.name} 剩余 {server.days_remaining} 天，未达到续费阈值 "
+                        f"{self.renew_threshold} 天，跳过续费"
                     )
 
                 result["servers"].append(server_status)
 
         except RainyunAPIError as e:
-            logger.error(f"服务器检查失败: {e}")
+            logger.error(f"{self._user_prefix}服务器检查失败: {e}")
             result["warnings"].append(f"API 调用失败: {e}")
 
         return result
