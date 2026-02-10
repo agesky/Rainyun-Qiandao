@@ -20,6 +20,10 @@ CaptchaHandler = Callable[[RuntimeContext], bool]
 
 
 class LoginPage:
+    _LOGIN_MAX_ATTEMPTS = 2
+    _LOGIN_REDIRECT_WAIT_SECONDS = 20
+    _LOGIN_CAPTCHA_WAIT_SECONDS = 8
+
     def __init__(self, ctx: RuntimeContext, captcha_handler: CaptchaHandler) -> None:
         self.ctx = ctx
         self.captcha_handler = captcha_handler
@@ -39,44 +43,83 @@ class LoginPage:
             return True
         return False
 
-    def login(self, user: str, pwd: str) -> bool:
-        """执行登录流程。"""
-        user_label = self.ctx.config.display_name or user
-        logger.info(f"用户 {user_label} 发起登录请求")
-        self.ctx.driver.get(build_app_url(self.ctx.config, "/auth/login"))
+    def _submit_login_form(self, user: str, pwd: str, user_label: str) -> bool:
         try:
             username = self.ctx.wait.until(EC.visibility_of_element_located((By.NAME, "login-field")))
             password = self.ctx.wait.until(EC.visibility_of_element_located((By.NAME, "login-password")))
-            # 优化：使用文本和类型定位登录按钮，增强稳定性
             login_button = self.ctx.wait.until(
                 EC.visibility_of_element_located((By.XPATH, XPATH_CONFIG["LOGIN_BTN"]))
             )
+            username.clear()
+            password.clear()
             username.send_keys(user)
             password.send_keys(pwd)
             login_button.click()
+            return True
         except TimeoutException:
             logger.error(f"用户 {user_label} 页面加载超时，请尝试延长超时时间或切换到国内网络环境！")
             return False
+
+    def _handle_login_captcha(self, user_label: str, wait_seconds: int) -> bool:
         try:
-            self.ctx.wait.until(EC.visibility_of_element_located((By.ID, "tcaptcha_iframe_dy")))
+            captcha_wait = WebDriverWait(self.ctx.driver, wait_seconds, poll_frequency=0.5)
+            captcha_wait.until(EC.visibility_of_element_located((By.ID, "tcaptcha_iframe_dy")))
             logger.warning(f"用户 {user_label} 触发验证码！")
             self.ctx.driver.switch_to.frame("tcaptcha_iframe_dy")
             if not self.captcha_handler(self.ctx):
                 logger.error(f"用户 {user_label} 登录验证码识别失败")
                 return False
-        except TimeoutException:
-            logger.info(f"用户 {user_label} 未触发验证码")
-        time.sleep(2)  # 给页面一点点缓冲时间
-        self.ctx.driver.switch_to.default_content()
-        try:
-            # 使用显式等待检测登录是否成功（通过判断 URL 变化）
-            self.ctx.wait.until(EC.url_contains("dashboard"))
-            logger.info(f"用户 {user_label} 登录成功！")
-            save_cookies(self.ctx.driver, self.ctx.config)
             return True
         except TimeoutException:
-            logger.error(f"用户 {user_label} 登录超时或失败！当前 URL: {self.ctx.driver.current_url}")
+            logger.info(f"用户 {user_label} 未触发验证码")
+            return True
+        finally:
+            self.ctx.driver.switch_to.default_content()
+
+    def _wait_login_redirect(self) -> bool:
+        wait_seconds = max(self.ctx.config.timeout, self._LOGIN_REDIRECT_WAIT_SECONDS)
+        redirect_wait = WebDriverWait(self.ctx.driver, wait_seconds, poll_frequency=0.5)
+        try:
+            redirect_wait.until(EC.url_contains("dashboard"))
+            return True
+        except TimeoutException:
             return False
+
+    def login(self, user: str, pwd: str) -> bool:
+        """执行登录流程。"""
+        user_label = self.ctx.config.display_name or user
+        logger.info(f"用户 {user_label} 发起登录请求")
+        self.ctx.driver.get(build_app_url(self.ctx.config, "/auth/login"))
+        for attempt in range(1, self._LOGIN_MAX_ATTEMPTS + 1):
+            if not self._submit_login_form(user, pwd, user_label):
+                return False
+
+            captcha_wait_seconds = max(self.ctx.config.timeout, self._LOGIN_CAPTCHA_WAIT_SECONDS)
+            if attempt > 1:
+                captcha_wait_seconds = self._LOGIN_CAPTCHA_WAIT_SECONDS
+
+            if not self._handle_login_captcha(user_label, wait_seconds=captcha_wait_seconds):
+                return False
+
+            time.sleep(2)  # 给页面一点点缓冲时间
+            if self._wait_login_redirect():
+                logger.info(f"用户 {user_label} 登录成功！")
+                save_cookies(self.ctx.driver, self.ctx.config)
+                return True
+
+            current_url = self.ctx.driver.current_url
+            if attempt < self._LOGIN_MAX_ATTEMPTS and "/auth/login" in current_url:
+                logger.warning(
+                    "用户 %s 第 %s 次登录后仍停留登录页，自动重试一次。当前 URL: %s",
+                    user_label,
+                    attempt,
+                    current_url,
+                )
+                continue
+            break
+
+        logger.error(f"用户 {user_label} 登录超时或失败！当前 URL: {self.ctx.driver.current_url}")
+        return False
 
 
 class RewardPage:
