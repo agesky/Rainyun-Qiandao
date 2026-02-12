@@ -2,16 +2,13 @@ name: Sync Upstream and Multi-Arch Build
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天北京时间上午 8 点左右自动运行
-  workflow_dispatch:    # 允许你随时手动点击 "Run workflow" 触发
+    - cron: '0 0 * * *' 
+  workflow_dispatch:    
 
 jobs:
-  # 第一步：同步代码
   sync-upstream:
     name: Sync with Upstream
     runs-on: ubuntu-latest
-    outputs:
-      has_updates: ${{ steps.sync.outputs.has_new_commits }}
     steps:
       - name: Checkout target repo
         uses: actions/checkout@v4
@@ -22,17 +19,16 @@ jobs:
         id: sync
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
         with:
+          # 修正后的参数名如下：
           target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-          upstream_repository: Jielumoon/Rainyun-Qiandao
-          upstream_branch: main
-          target_branch: main
+          upstream_sync_repo: Jielumoon/Rainyun-Qiandao
+          upstream_sync_branch: main
+          target_sync_branch: main
           test_mode: false
 
-  # 第二步：构建镜像（如果代码同步成功或手动触发）
   build-and-push:
     name: Build Multi-Arch Image
     needs: sync-upstream
-    # 只有当代码有更新，或者是手动运行、定时运行时才执行构建
     if: always() 
     runs-on: ubuntu-latest
     permissions:
@@ -43,11 +39,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 设置 QEMU 以支持多架构构建 (ARM64)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 设置 Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -63,10 +57,8 @@ jobs:
         with:
           context: .
           push: true
-          # 同时构建 AMD64 和 ARM64 架构
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/${{ github.repository_owner }}/rainyun-qiandao:latest
-          # 开启缓存以加快下次构建速度
           cache-from: type=gha
           cache-to: type=gha,mode=max
