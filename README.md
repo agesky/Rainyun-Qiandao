@@ -12,12 +12,14 @@
 
 ## 快速开始（Docker）
 
-```bash
-# 1. 准备环境变量
-cp .env.example .env
+默认 `docker-compose.yml` 使用 GitHub Container Registry 预构建镜像，不需要在目标机器上本地构建。
 
-# 2. 构建并启动
-docker compose up -d --build
+```bash
+# 1. 下载部署文件
+curl -O https://raw.githubusercontent.com/Jielumoon/Rainyun-Qiandao/main/docker-compose.yml
+
+# 2. 启动
+docker compose up -d
 ```
 
 打开浏览器访问：
@@ -26,6 +28,66 @@ http://localhost:8000
 ```
 
 首次登录会初始化管理密码，后续使用该密码登录。
+
+默认镜像：
+
+```text
+ghcr.io/jielumoon/rainyun-qiandao:latest
+```
+
+如需指定镜像版本，可在启动前设置：
+
+```bash
+RAINYUN_IMAGE=ghcr.io/jielumoon/rainyun-qiandao:<tag> docker compose up -d
+```
+
+## 开发构建
+
+开发或本地改代码时使用 `docker-compose.dev.yml`，它会从当前源码构建镜像：
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+调试完停止：
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+## 自动构建镜像
+
+项目已配置 GitHub Actions：
+
+- 推送到 `main`：构建并推送 `ghcr.io/jielumoon/rainyun-qiandao:latest`
+- 推送 `v*` 标签：构建并推送对应版本标签
+- Pull Request：只构建验证，不推送镜像
+- 手动触发：支持在 GitHub Actions 页面运行 `Docker Image`
+- 构建平台：`linux/amd64` 与 `linux/arm64`
+
+首次使用 GHCR 时，请确认仓库的 `Settings -> Actions -> General -> Workflow permissions` 允许写入 packages；镜像可见性可在 GitHub Packages 页面调整。
+
+## 版本发布
+
+发布稳定版本时使用 Git tag，推荐格式为 `v主版本.次版本.修订号`，例如 `v3.1.0`：
+
+```bash
+git tag v3.1.0
+git push origin v3.1.0
+```
+
+标签推送后，GitHub Actions 会自动构建并推送：
+
+```text
+ghcr.io/jielumoon/rainyun-qiandao:v3.1.0
+```
+
+用户可在 `.env` 中固定版本，避免 `latest` 自动跟随主分支：
+
+```env
+RAINYUN_IMAGE=ghcr.io/jielumoon/rainyun-qiandao:v3.1.0
+```
 
 ## Web 面板说明
 
